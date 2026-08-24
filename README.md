@@ -67,3 +67,9 @@ GMAIL_APP_PASSWORD=google-app-password
 2. 네이버 예약 API 수집 및 재고 차단 기능 추가
 3. 매장 PC 원격제어 브리지와 안전한 명령 대기열 연결
 4. 기존 Gmail 예약 파싱 기능을 새 동기화 방식으로 교체
+
+## Cloudflare 웹 템플릿
+
+`cloudflare-web/`에는 Cloudflare Workers와 D1을 사용하는 새 예약·관리자 웹 템플릿이 있습니다. 이 폴더는 `cloudflare-reservation-platform` 브랜치에서 개발합니다.
+
+수원영통 지점의 실제 방 순서, 맵 번호, 가격, 네이버 상품 ID, Cloudflare 프로젝트 ID는 운영 장비 및 계정 확인 후 설정합니다. 인증 토큰, PIN, 세션 비밀값, 운영 DB는 저장소에 넣지 않습니다.
