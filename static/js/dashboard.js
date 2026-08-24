@@ -252,7 +252,14 @@ async function refreshWalkInList() {
             if (item.is_naver) {
                 card.classList.add('is-naver-card'); 
                 card.querySelector('.walkin-team-text').innerHTML = `<span style="color: #1ec800;">네이버</span>`;
-                card.querySelector('.info span:nth-of-type(2)').textContent = `${item.name} (${item.time})`; 
+                const naverLabel = item.team ? `네이버 · ${item.team}` : '네이버';
+                const naverTeamElement = card.querySelector('.walkin-team-text');
+                naverTeamElement.textContent = naverLabel;
+                naverTeamElement.style.color = '#1ec800';
+                const details = [item.name, item.time, item.phone, item.difficulty]
+                    .filter(value => value !== undefined && value !== null && String(value).trim() !== '')
+                    .join(' · ');
+                card.querySelector('.info span:nth-of-type(2)').textContent = details;
 
                 // 🎯 네이버 버튼 클릭 시 작동하는 검문 구역
                 btn.addEventListener('click', () => {
@@ -468,6 +475,10 @@ async function handleConfirmNaver(bookingId) {
         };
 
         // 5. ⭐️ addCard 엔진을 통해 타임테이블 셀에 카드 시각적 배치
+        bookingData.team = bookingItem.team || bookingData.team;
+        bookingData.phone = bookingItem.phone || bookingData.phone;
+        bookingData.level = bookingItem.difficulty || bookingData.level;
+        bookingData.people = bookingItem.people || bookingData.people;
         const card = addCard(cell, bookingData, 0, isPast);
 
         // 6. ⭐️ 미기입 시 카드가 증발하던 원인: paymentData 스펙 세팅

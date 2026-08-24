@@ -59,6 +59,13 @@ class NaverReservationIntakeTest(unittest.TestCase):
         self.assertEqual(reservation_status, "CONFIRMED")
         self.assertEqual(reservation_detail, ("테스트팀", "중급", "01012345678"))
 
+        today_items = self.client.get("/api/naver-bookings/today-init").get_json()
+        self.assertEqual(len(today_items), 1)
+        self.assertEqual(today_items[0]["team"], "테스트팀")
+        self.assertEqual(today_items[0]["difficulty"], "중급")
+        self.assertEqual(today_items[0]["phone"], "01012345678")
+        self.assertEqual(today_items[0]["people"], 3)
+
         cancelled = self.client.post(
             "/api/integrations/naver/reservations",
             headers=headers,

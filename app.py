@@ -2495,10 +2495,19 @@ def get_today_init_bookings():
     
     # 오늘 이용 조건 + 상태가 INIT인 건만 조회
     query = """
-        SELECT booking_id, masked_name, use_time_key, room_name 
-        FROM naver_mail_cache 
-        WHERE use_date = ? AND status = 'INIT'
-        ORDER BY use_time_key ASC
+        SELECT
+            cache.booking_id,
+            cache.masked_name,
+            cache.use_time_key,
+            cache.room_name,
+            COALESCE(reservation.team_name, ''),
+            COALESCE(reservation.difficulty, ''),
+            COALESCE(reservation.phone, ''),
+            COALESCE(reservation.people_count, '')
+        FROM naver_mail_cache AS cache
+        LEFT JOIN naver_reservations AS reservation ON reservation.booking_id = cache.booking_id
+        WHERE cache.use_date = ? AND cache.status = 'INIT'
+        ORDER BY cache.use_time_key ASC
     """
     cursor.execute(query, (today_str,))
     rows = cursor.fetchall()
@@ -2511,7 +2520,11 @@ def get_today_init_bookings():
             'booking_id': row[0],
             'name': row[1],
             'time': row[2].replace('-', ':'),
-            'room': row[3]
+            'room': row[3],
+            'team': row[4],
+            'difficulty': row[5],
+            'phone': row[6],
+            'people': row[7],
         })
         
     return jsonify(booking_list)
