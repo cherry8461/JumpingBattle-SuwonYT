@@ -3,8 +3,8 @@ import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
+const SUWON_YEONGTONG_DATABASE_ID =
+  "485b6b57-7ccc-481b-83ef-273af1c8fa81";
 
 const { d1, r2 } = hostingConfig;
 
@@ -18,8 +18,8 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: "jumpingbattle-suwonyeongtong-db",
+          database_id: SUWON_YEONGTONG_DATABASE_ID,
         },
       ]
     : [],

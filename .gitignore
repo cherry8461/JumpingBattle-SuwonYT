@@ -25,6 +25,12 @@ __pycache__/
 venv/
 .venv/
 
+# Node.js / Cloudflare build outputs
+node_modules/
+dist/
+.wrangler/
+.next/
+
 # Editors and operating systems
 .vscode/
 .idea/

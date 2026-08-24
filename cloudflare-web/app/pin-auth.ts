@@ -59,7 +59,7 @@ function readCookie(cookieHeader: string | null, name: string) {
 
 export async function isValidOperatorPin(pin: string) {
   const configured = getPinEnv().JUMPING_OPERATOR_PIN ?? "";
-  return /^\d{4}$/.test(configured) && constantTimeEqual(pin, configured);
+  return /^\d{6}$/.test(configured) && constantTimeEqual(pin, configured);
 }
 
 export async function createOperatorSessionCookie() {

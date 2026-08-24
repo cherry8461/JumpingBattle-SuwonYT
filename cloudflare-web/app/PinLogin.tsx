@@ -9,7 +9,7 @@ export default function PinLogin() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!/^\d{4}$/.test(pin)) {
+    if (!/^\d{6}$/.test(pin)) {
       setError("PIN 번호 4자리를 입력해주세요.");
       return;
     }
@@ -44,12 +44,12 @@ export default function PinLogin() {
         type="password"
         inputMode="numeric"
         autoComplete="one-time-code"
-        pattern="[0-9]{4}"
-        maxLength={4}
+        pattern="[0-9]{6}"
+        maxLength={6}
         value={pin}
         disabled={busy}
         onChange={(event) =>
-          setPin(event.target.value.replace(/\D/g, "").slice(0, 4))
+          setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
         }
         aria-describedby={error ? "pin-error" : "pin-help"}
         autoFocus

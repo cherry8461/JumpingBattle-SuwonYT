@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (/^\d{4}$/.test(pin) && (await isValidOperatorPin(pin))) {
+    if (/^\d{6}$/.test(pin) && (await isValidOperatorPin(pin))) {
       await db
         .prepare(`DELETE FROM pin_attempts WHERE client_key = ?`)
         .bind(clientKey)
