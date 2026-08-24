@@ -13,6 +13,7 @@ os.environ["GAME_MONITOR_LOG_DIR"] = str(TEST_ROOT / "logs")
 os.environ["NAVER_AGENT_TOKEN"] = "test-naver-agent-token"
 
 import app  # noqa: E402
+from monitor_modules.naver_reservations import normalize_difficulty  # noqa: E402
 
 
 class NaverReservationIntakeTest(unittest.TestCase):
@@ -64,7 +65,7 @@ class NaverReservationIntakeTest(unittest.TestCase):
         self.assertEqual(today_items[0]["team"], "테스트팀")
         self.assertEqual(today_items[0]["difficulty"], "중급")
         self.assertEqual(today_items[0]["phone"], "01012345678")
-        self.assertEqual(today_items[0]["people"], 3)
+        self.assertEqual(today_items[0]["people"], 0)
 
         cancelled = self.client.post(
             "/api/integrations/naver/reservations",
@@ -97,6 +98,39 @@ class NaverReservationIntakeTest(unittest.TestCase):
         self.assertIsNone(cache_row)
         self.assertIsNone(reservation_status)
         self.assertEqual(no_show_count, 1)
+
+        restored = self.client.post(
+            "/api/integrations/naver/reservations",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "bookNo": "TEST-NAVER-1001",
+                        "when": "2026.08.24. 오후 3:30",
+                        "product": "점핑배틀 C1",
+                        "status": "확정",
+                        "name": "테스트고객",
+                    }
+                ]
+            },
+        )
+        self.assertEqual(restored.status_code, 200)
+        with sqlite3.connect(app.DB_FILE) as connection:
+            restored_count = connection.execute(
+                "SELECT no_show_count FROM settlement_daily_meta WHERE target_date=?", ("2026-08-24",)
+            ).fetchone()[0]
+            restored_cache = connection.execute(
+                "SELECT status FROM naver_mail_cache WHERE booking_id=?", ("TEST-NAVER-1001",)
+            ).fetchone()[0]
+        self.assertEqual(restored_count, 0)
+        self.assertEqual(restored_cache, "INIT")
+
+    def test_naver_difficulty_description_uses_dashboard_label(self):
+        self.assertEqual(
+            normalize_difficulty("Basic (\ub09c\uc774\ub3c41) - \uc815\uaddc\ub9f5 / \ucd08\uc2ec\uc790 \ucd94\ucc9c"),
+            "\ubca0\uc774\uc9c1",
+        )
+        self.assertEqual(normalize_difficulty("Normal (\ub09c\uc774\ub3c43)"), "\ub178\uba40")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ config/credentials.json
 *.db_*
 *.sqlite
 *.sqlite3
+data/
 database_backup/
 logs/
 *.log

@@ -79,6 +79,7 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
                     cursor.execute("DELETE FROM naver_reservations WHERE booking_id=?", (normalized["booking_id"],))
                 elif normalized["is_actionable"]:
+                    restore_reversed_cancellation(cursor, normalized["booking_id"], normalized["use_date"])
                     cursor.execute(
                         """
                         INSERT INTO naver_mail_cache
@@ -133,10 +134,12 @@ def normalize_item(item: object) -> dict | None:
     room_name = room_match.group(1).upper() if room_match else ""
     customer_name = clean_text(item.get("name"), 80)
     team_name = clean_text(item.get("teamName"), 120)
-    difficulty = clean_text(item.get("difficulty"), 80)
+    difficulty = normalize_difficulty(item.get("difficulty"))
     phone = normalize_phone(item.get("phone"))
     status = normalize_status(item.get("status"))
-    people_count = safe_people_count(item.get("totalCount"))
+    # Naver's booking count defaults to 1 even when the group size has not
+    # been decided.  Do not copy that placeholder into the operation board.
+    people_count = 0
     fingerprint = json.dumps(
         {
             "status": status,
@@ -201,6 +204,23 @@ def register_cancellation(cursor, booking_id: str, use_date: str) -> bool:
     return True
 
 
+def restore_reversed_cancellation(cursor, booking_id: str, use_date: str) -> None:
+    """Undo a same-day count if a reservation later returns to an active state."""
+    cursor.execute("DELETE FROM naver_cancellation_events WHERE booking_id=?", (booking_id,))
+    removed_event = cursor.rowcount == 1
+    if not (removed_event and use_date == datetime.now().strftime("%Y-%m-%d")):
+        return
+    cursor.execute(
+        """
+        UPDATE settlement_daily_meta
+           SET no_show_count=MAX(no_show_count - 1, 0),
+               updated_at=datetime('now', 'localtime')
+         WHERE target_date=?
+        """,
+        (use_date,),
+    )
+
+
 def parse_when(value: object) -> tuple[str, str]:
     text = str(value or "")
     date_match = DATE_PATTERN.search(text)
@@ -229,6 +249,33 @@ def normalize_status(value: object) -> str:
     if "완료" in str(value or "") or "COMPLETE" in text or "USED" in text:
         return "COMPLETED"
     return "CONFIRMED"
+
+
+def normalize_difficulty(value: object) -> str:
+    """Convert Naver's full form answer to the dashboard's short level label."""
+    difficulty = clean_text(value, 200)
+    if not difficulty:
+        return ""
+
+    labels = (
+        ("basic", "\ubca0\uc774\uc9c1"),
+        ("easy", "\uc774\uc9c0"),
+        ("normal", "\ub178\uba40"),
+        ("hard", "\ud558\ub4dc"),
+        ("challenger", "\ucc4c\ub9b0\uc800"),
+        ("kids", "\uc720\uc544"),
+        ("toddler", "\uc720\uc544"),
+        ("summer", "\uc5ec\ub984"),
+        ("space", "\uc6b0\uc8fc"),
+        ("santa", "\uc0b0\ud0c0"),
+    )
+    lower_value = difficulty.casefold()
+    for keyword, label in labels:
+        if keyword in lower_value:
+            return label
+
+    # Keep a manually entered Korean dashboard label as it is.
+    return difficulty[:80]
 
 
 def clean_text(value: object, max_length: int) -> str:

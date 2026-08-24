@@ -8,6 +8,7 @@ const CONFIRMED_STATUS_CODE = "RC03";
 const ALARM_NAME = "suwonyeongtong-naver-poll";
 const DELIVERY_STATE_KEY = "delivery-state";
 const KST_TIME_ZONE = "Asia/Seoul";
+const EXTENSION_BUILD = "suwonyt-force-sync-20260824-01";
 
 function requireConfig() {
   if (!Number.isFinite(Number(CONFIG.businessId)) || !String(CONFIG.endpoint || "").startsWith("http")) {
@@ -105,12 +106,13 @@ function mapBooking(booking) {
   const statusText = [booking?.bookingStatusName, booking?.bookingStatusCodeName, booking?.statusName, booking?.status]
     .map(value => String(value || "")).join(" ");
   const completed = booking?.isCompleted === true || /사용완료|이용완료|COMPLETED|USED|DONE/i.test(statusText);
-  const cancelled = !completed && (
-    Number(booking?.cancelledCount || 0) > 0 || Number(booking?.userCancelledCount || 0) > 0 ||
-    booking?.isAllRefunded === true || /취소|환불|CANCEL|REFUND/i.test(statusText)
-  );
-  const confirmed = booking?.bookingStatusCode === CONFIRMED_STATUS_CODE || /확정|CONFIRM/i.test(statusText);
-  if (!bookNo || (!cancelled && !completed && !confirmed)) return null;
+  // Naver's cancelledCount can be populated even for an active booking.
+  // Only the explicit status label/code is reliable for cancellation handling.
+  const cancelled = !completed && /취소|환불|CANCEL|REFUND/i.test(statusText);
+  // A newly placed booking can still be in a request/approval status instead
+  // of RC03. Forward every non-cancelled active booking immediately so the
+  // dashboard reacts at reservation time, not only after confirmation.
+  if (!bookNo) return null;
   const people = [booking?.bookingCount, booking?.personCount, booking?.totalPersonCount,
     booking?.snapshotJson?.bookingCount, booking?.snapshotJson?.personCount]
     .map(value => Number(value || 0)).find(value => Number.isInteger(value) && value > 0 && value <= 30) || 0;
@@ -131,10 +133,10 @@ function fingerprint(item) {
   return JSON.stringify([item.status, item.when, item.product, item.name, item.phone, item.teamName, item.difficulty, item.totalCount]);
 }
 
-async function sendChangedBookings(items) {
+async function sendChangedBookings(items, force = false) {
   const stored = await chrome.storage.local.get(DELIVERY_STATE_KEY);
   const previous = stored[DELIVERY_STATE_KEY] || {};
-  const changed = items.filter(item => previous[item.bookNo] !== fingerprint(item));
+  const changed = force ? items : items.filter(item => previous[item.bookNo] !== fingerprint(item));
   if (!changed.length) return { sent: 0 };
   const response = await fetch(CONFIG.endpoint, {
     method: "POST",
@@ -150,18 +152,33 @@ async function sendChangedBookings(items) {
   }
   changed.forEach(item => { previous[item.bookNo] = fingerprint(item); });
   await chrome.storage.local.set({ [DELIVERY_STATE_KEY]: previous });
-  return { sent: changed.length };
+  return {
+    sent: changed.length,
+    accepted: Number(body.accepted || 0),
+    ignored: Number(body.ignored || 0),
+    sameDayCancellations: Number(body.same_day_cancellations || 0)
+  };
 }
 
-async function syncReservations() {
+async function syncReservations(force = false) {
   requireConfig();
   const { startIso, endIso } = bookingRange();
   const itemIds = await discoverItemIds(startIso, endIso);
   const groups = await Promise.all(itemIds.map(id => fetchBookings(id, startIso, endIso)));
   const byId = new Map();
   groups.flat().map(mapBooking).filter(Boolean).forEach(item => byId.set(item.bookNo, item));
-  const delivery = await sendChangedBookings([...byId.values()]);
-  console.info("[SuwonYT Naver] synchronized", { bookings: byId.size, ...delivery });
+  console.info("[SuwonYT Naver] reservation summary", [...byId.values()].map(item => ({
+    when: item.when,
+    status: item.status,
+    product: item.product
+  })));
+  const delivery = await sendChangedBookings([...byId.values()], force);
+  console.info("[SuwonYT Naver] synchronized", {
+    build: EXTENSION_BUILD,
+    force,
+    bookings: byId.size,
+    ...delivery
+  });
   return { bookings: byId.size, ...delivery };
 }
 
@@ -175,4 +192,7 @@ chrome.runtime.onStartup.addListener(() => ensureAlarm().catch(error => console.
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === ALARM_NAME) syncReservations().catch(error => console.error("[SuwonYT Naver]", error));
 });
-chrome.action.onClicked.addListener(() => syncReservations().catch(error => console.error("[SuwonYT Naver]", error)));
+chrome.action.onClicked.addListener(() => {
+  console.info("[SuwonYT Naver] manual sync requested", { build: EXTENSION_BUILD });
+  syncReservations(true).catch(error => console.error("[SuwonYT Naver]", error));
+});
