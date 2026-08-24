@@ -28,8 +28,21 @@ from gspread_formatting import format_cell_ranges, Color, set_column_widths
 # ========================================================
 # Flask
 # ========================================================
+load_dotenv()
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.abspath(os.getenv("GAME_MONITOR_DATA_DIR", os.path.join(PROJECT_ROOT, "data")))
+DB_FILE = os.path.abspath(os.getenv("GAME_MONITOR_DB_PATH", os.path.join(DATA_DIR, "game_data.db")))
+SERVER_LOG_DIR = os.path.abspath(
+    os.getenv(
+        "GAME_MANAGER_LOG_DIR",
+        r"D:\JPLuncher\apps\250625_v2_0_3_JumPing_Manager\file\log",
+    )
+)
+LOG_DIR = os.path.abspath(os.getenv("GAME_MONITOR_LOG_DIR", os.path.join(PROJECT_ROOT, "logs")))
+
 web = Flask(__name__)
-web.config["SECRET_KEY"] = "secret!"
+web.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "development-only-change-me")
 web.config["TEMPLATES_AUTO_RELOAD"] = True
 web.jinja_env.auto_reload = True
 
@@ -38,16 +51,10 @@ web.wsgi_app = ProxyFix(web.wsgi_app, x_proto=1, x_host=1)
 
 socketio = SocketIO(web, cors_allowed_origins="*", ping_timeout=60, ping_interval=15, async_mode='threading')
 
-DB_FILE = r"D:\game_monitor\game_data.db"
-SERVER_LOG_DIR = r"D:\JPLuncher\apps\250625_v2_0_3_JumPing_Manager\file\log"
-LOG_DIR = r"D:\game_monitor\logs"
-
 OFFSET_FILE = "log_offset.dat"
 PAD_COUNT = 4
 
-MY_SECRET = "123456789" 
-
-base_path = os.path.dirname(os.path.abspath(__file__))
+base_path = PROJECT_ROOT
 key_path = os.path.join(base_path, "config", "google_key.json")
 gc = None
 sh = None 
@@ -465,9 +472,24 @@ parse_stats = {
 # ========================================================
 # DB 초기화
 # ========================================================
+def get_db_connection(timeout=30):
+    """Open the local SQLite database with settings safe for concurrent web/log access."""
+    db_parent = os.path.dirname(DB_FILE)
+    if db_parent:
+        os.makedirs(db_parent, exist_ok=True)
+    connection = sqlite3.connect(DB_FILE, timeout=timeout)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 30000")
+    return connection
+
+
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cur = conn.cursor()
+
+    # WAL keeps readers responsive while the log monitor records game results.
+    cur.execute("PRAGMA journal_mode = WAL")
+    cur.execute("PRAGMA synchronous = NORMAL")
 
     cur.execute('''CREATE TABLE IF NOT EXISTS supply_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -648,6 +670,114 @@ def init_db():
                 status TEXT DEFAULT 'INIT',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         
+
+    # Logical rooms remain stable even when each room later uses a separate PC.
+    cur.execute('''CREATE TABLE IF NOT EXISTS rooms (
+                room_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                pad_id INTEGER,
+                agent_mode TEXT NOT NULL DEFAULT 'shared_manager',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    cur.executemany(
+        '''INSERT OR IGNORE INTO rooms (room_id, display_name, pad_id)
+           VALUES (?, ?, ?)''',
+        [(room_name, room_name, pad_id) for pad_id, room_name in PAD_MAP.items()],
+    )
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS room_agents (
+                agent_id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL DEFAULT '',
+                host_name TEXT NOT NULL DEFAULT '',
+                agent_version TEXT NOT NULL DEFAULT '',
+                connection_mode TEXT NOT NULL DEFAULT 'mqtt',
+                status TEXT NOT NULL DEFAULT 'offline',
+                last_seen_at TEXT,
+                capabilities_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(room_id) REFERENCES rooms(room_id))''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS command_queue (
+                command_id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                command_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                requested_by TEXT NOT NULL DEFAULT '',
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                claimed_by TEXT,
+                claimed_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error_message TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(room_id) REFERENCES rooms(room_id))''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS command_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command_id TEXT NOT NULL,
+                room_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                actor_id TEXT NOT NULL DEFAULT '',
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_reservations (
+                booking_id TEXT PRIMARY KEY,
+                booking_status TEXT NOT NULL,
+                use_date TEXT NOT NULL,
+                use_time_key TEXT NOT NULL,
+                room_name TEXT NOT NULL DEFAULT '',
+                product_name TEXT NOT NULL DEFAULT '',
+                customer_name TEXT NOT NULL DEFAULT '',
+                people_count INTEGER,
+                booking_fingerprint TEXT NOT NULL DEFAULT '',
+                first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                cancelled_at TIMESTAMP)''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_stock_rules (
+                rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                business_item_id TEXT NOT NULL,
+                use_date TEXT NOT NULL,
+                use_time_key TEXT NOT NULL,
+                room_id TEXT NOT NULL DEFAULT '',
+                blocked INTEGER NOT NULL DEFAULT 1,
+                reason TEXT NOT NULL DEFAULT '',
+                updated_by TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(business_item_id, use_date, use_time_key))''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_stock_sync_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                response_summary TEXT NOT NULL DEFAULT '',
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    cur.execute('''CREATE TABLE IF NOT EXISTS db_maintenance_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP)''')
+
+    # Existing-table indexes: additive only, safe for the current schema.
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_game_records_time_pad ON game_records(time, pad_id)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_bookings_date_room_time ON bookings(booking_date, room, time_key)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_queue_items_room_order ON queue_items(room, order_no)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_walkins_time_status ON walkins(reg_time, status)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_mail_cache_today ON naver_mail_cache(use_date, status, use_time_key)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_supply_history_date ON supply_history(target_date)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_room_agents_room_status ON room_agents(room_id, status)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_command_queue_room_status ON command_queue(room_id, status, requested_at)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_command_history_command ON command_history(command_id, created_at)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_reservations_date_status ON naver_reservations(use_date, booking_status, use_time_key)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_stock_rules_date ON naver_stock_rules(use_date, use_time_key)')
 
     cur.execute("PRAGMA table_info(queue_items)")
     queue_cols = [r[1] for r in cur.fetchall()]
@@ -2448,10 +2578,13 @@ def check_cancellations_on_startup():
     """
     print("🔍 [서버 구동] 네이버 예약 취소 메일 일괄 스캔을 시작합니다...")
     
-    # ⚙️ 매장 Gmail 설정
-    IMAP_SERVER = "imap.gmail.com"
-    IMAP_USER = "jumpingbattleswyt@gmail.com"
-    IMAP_PASSWORD = "xxxx xxxx xxxx xxxx" # ⚠️ 구글 계정에서 발급받은 16자리 '앱 비밀번호' 입력!
+    # Keep account credentials in the ignored local .env file.
+    IMAP_SERVER = os.getenv("GMAIL_IMAP_SERVER", "imap.gmail.com")
+    IMAP_USER = os.getenv("GMAIL_USER")
+    IMAP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+    if not IMAP_USER or not IMAP_PASSWORD:
+        print("[예약 취소 동기화 건너뜀] Gmail 환경설정이 없습니다.")
+        return
 
     try:
         # 1. Gmail IMAP 서버 연결
