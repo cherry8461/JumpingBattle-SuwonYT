@@ -34,6 +34,9 @@ class NaverReservationIntakeTest(unittest.TestCase):
                         "product": "점핑배틀 C1",
                         "status": "확정",
                         "name": "테스트고객",
+                        "teamName": "테스트팀",
+                        "difficulty": "중급",
+                        "phone": "010-1234-5678",
                         "totalCount": 3,
                     }
                 ]
@@ -48,8 +51,13 @@ class NaverReservationIntakeTest(unittest.TestCase):
             reservation_status = connection.execute(
                 "SELECT booking_status FROM naver_reservations WHERE booking_id=?", ("TEST-NAVER-1001",)
             ).fetchone()[0]
+            reservation_detail = connection.execute(
+                "SELECT team_name, difficulty, phone FROM naver_reservations WHERE booking_id=?",
+                ("TEST-NAVER-1001",),
+            ).fetchone()
         self.assertEqual(cache_status, "INIT")
         self.assertEqual(reservation_status, "CONFIRMED")
+        self.assertEqual(reservation_detail, ("테스트팀", "중급", "01012345678"))
 
         cancelled = self.client.post(
             "/api/integrations/naver/reservations",

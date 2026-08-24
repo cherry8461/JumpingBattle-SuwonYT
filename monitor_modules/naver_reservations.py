@@ -51,9 +51,10 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     """
                     INSERT INTO naver_reservations (
                         booking_id, booking_status, use_date, use_time_key, room_name,
-                        product_name, customer_name, people_count, booking_fingerprint,
+                        product_name, customer_name, team_name, difficulty, phone,
+                        people_count, booking_fingerprint,
                         first_seen_at, updated_at, cancelled_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(booking_id) DO UPDATE SET
                         booking_status=excluded.booking_status,
                         use_date=excluded.use_date,
@@ -61,6 +62,9 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                         room_name=excluded.room_name,
                         product_name=excluded.product_name,
                         customer_name=excluded.customer_name,
+                        team_name=excluded.team_name,
+                        difficulty=excluded.difficulty,
+                        phone=excluded.phone,
                         people_count=excluded.people_count,
                         booking_fingerprint=excluded.booking_fingerprint,
                         updated_at=excluded.updated_at,
@@ -128,6 +132,9 @@ def normalize_item(item: object) -> dict | None:
     room_match = ROOM_PATTERN.search(product_name)
     room_name = room_match.group(1).upper() if room_match else ""
     customer_name = clean_text(item.get("name"), 80)
+    team_name = clean_text(item.get("teamName"), 120)
+    difficulty = clean_text(item.get("difficulty"), 80)
+    phone = normalize_phone(item.get("phone"))
     status = normalize_status(item.get("status"))
     people_count = safe_people_count(item.get("totalCount"))
     fingerprint = json.dumps(
@@ -137,6 +144,8 @@ def normalize_item(item: object) -> dict | None:
             "room": room_name,
             "product": product_name,
             "name": customer_name,
+            "team": team_name,
+            "difficulty": difficulty,
             "people": people_count,
         },
         ensure_ascii=False,
@@ -160,6 +169,9 @@ def normalize_item(item: object) -> dict | None:
             room_name,
             product_name,
             customer_name,
+            team_name,
+            difficulty,
+            phone,
             people_count,
             fingerprint,
         ),
@@ -229,3 +241,8 @@ def safe_people_count(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return count if 0 < count <= 30 else None
+
+
+def normalize_phone(value: object) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    return digits if 8 <= len(digits) <= 15 else ""

@@ -720,11 +720,20 @@ def init_db():
                 room_name TEXT NOT NULL DEFAULT '',
                 product_name TEXT NOT NULL DEFAULT '',
                 customer_name TEXT NOT NULL DEFAULT '',
+                team_name TEXT NOT NULL DEFAULT '',
+                difficulty TEXT NOT NULL DEFAULT '',
+                phone TEXT NOT NULL DEFAULT '',
                 people_count INTEGER,
                 booking_fingerprint TEXT NOT NULL DEFAULT '',
                 first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 cancelled_at TIMESTAMP)''')
+
+    cur.execute("PRAGMA table_info(naver_reservations)")
+    naver_reservation_columns = {row[1] for row in cur.fetchall()}
+    for column_name in ("team_name", "difficulty", "phone"):
+        if column_name not in naver_reservation_columns:
+            cur.execute(f"ALTER TABLE naver_reservations ADD COLUMN {column_name} TEXT NOT NULL DEFAULT ''")
 
     cur.execute('''CREATE TABLE IF NOT EXISTS naver_stock_rules (
                 rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
