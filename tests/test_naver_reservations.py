@@ -67,16 +67,21 @@ class NaverReservationIntakeTest(unittest.TestCase):
             },
         )
         self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.get_json()["same_day_cancellations"], 1)
 
         with sqlite3.connect(app.DB_FILE) as connection:
-            cache_status = connection.execute(
+            cache_row = connection.execute(
                 "SELECT status FROM naver_mail_cache WHERE booking_id=?", ("TEST-NAVER-1001",)
-            ).fetchone()[0]
+            ).fetchone()
             reservation_status = connection.execute(
                 "SELECT booking_status FROM naver_reservations WHERE booking_id=?", ("TEST-NAVER-1001",)
+            ).fetchone()
+            no_show_count = connection.execute(
+                "SELECT no_show_count FROM settlement_daily_meta WHERE target_date=?", ("2026-08-24",)
             ).fetchone()[0]
-        self.assertEqual(cache_status, "CANCELED")
-        self.assertEqual(reservation_status, "CANCELED")
+        self.assertIsNone(cache_row)
+        self.assertIsNone(reservation_status)
+        self.assertEqual(no_show_count, 1)
 
 
 if __name__ == "__main__":

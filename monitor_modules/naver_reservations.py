@@ -37,6 +37,7 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
 
         accepted = 0
         ignored = 0
+        same_day_cancellations = 0
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db_connection() as connection:
             cursor = connection.cursor()
@@ -69,10 +70,10 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                 )
 
                 if normalized["is_cancelled"]:
-                    cursor.execute(
-                        "UPDATE naver_mail_cache SET status='CANCELED' WHERE booking_id=?",
-                        (normalized["booking_id"],),
-                    )
+                    if register_cancellation(cursor, normalized["booking_id"], normalized["use_date"]):
+                        same_day_cancellations += 1
+                    cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
+                    cursor.execute("DELETE FROM naver_reservations WHERE booking_id=?", (normalized["booking_id"],))
                 elif normalized["is_actionable"]:
                     cursor.execute(
                         """
@@ -99,8 +100,16 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     )
                 accepted += 1
 
-        socketio.emit("naver_reservations_synced", {"accepted": accepted, "ignored": ignored})
-        return jsonify(success=True, accepted=accepted, ignored=ignored)
+        socketio.emit(
+            "naver_reservations_synced",
+            {"accepted": accepted, "ignored": ignored, "same_day_cancellations": same_day_cancellations},
+        )
+        return jsonify(
+            success=True,
+            accepted=accepted,
+            ignored=ignored,
+            same_day_cancellations=same_day_cancellations,
+        )
 
     return blueprint
 
@@ -155,6 +164,29 @@ def normalize_item(item: object) -> dict | None:
             fingerprint,
         ),
     }
+
+
+def register_cancellation(cursor, booking_id: str, use_date: str) -> bool:
+    """Count a same-day cancellation once, even if the extension retries delivery."""
+    cursor.execute(
+        "INSERT OR IGNORE INTO naver_cancellation_events (booking_id, use_date) VALUES (?, ?)",
+        (booking_id, use_date),
+    )
+    is_first_cancellation = cursor.rowcount == 1
+    is_today = use_date == datetime.now().strftime("%Y-%m-%d")
+    if not (is_first_cancellation and is_today):
+        return False
+    cursor.execute(
+        """
+        INSERT INTO settlement_daily_meta (target_date, no_show_count, updated_at)
+        VALUES (?, 1, datetime('now', 'localtime'))
+        ON CONFLICT(target_date) DO UPDATE SET
+            no_show_count=settlement_daily_meta.no_show_count + 1,
+            updated_at=datetime('now', 'localtime')
+        """,
+        (use_date,),
+    )
+    return True
 
 
 def parse_when(value: object) -> tuple[str, str]:

@@ -746,6 +746,12 @@ def init_db():
                 response_summary TEXT NOT NULL DEFAULT '',
                 synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
+    # Keeps only a booking identifier to prevent duplicate same-day cancellation counts.
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_cancellation_events (
+                booking_id TEXT PRIMARY KEY,
+                use_date TEXT NOT NULL,
+                counted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
     cur.execute('''CREATE TABLE IF NOT EXISTS db_maintenance_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_name TEXT NOT NULL,
