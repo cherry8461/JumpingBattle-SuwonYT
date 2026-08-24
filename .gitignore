@@ -25,6 +25,15 @@ __pycache__/
 venv/
 .venv/
 
+# Node.js / Cloudflare build outputs
+node_modules/
+dist/
+.wrangler/
+.next/
+
+# Cloudflare reference template lives on its own branch.
+cloudflare-web/
+
 # Editors and operating systems
 .vscode/
 .idea/
