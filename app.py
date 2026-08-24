@@ -24,25 +24,20 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from oauth2client.service_account import ServiceAccountCredentials
 from gspread_formatting import format_cell_ranges, Color, set_column_widths
+from monitor_core.database import get_db_connection
+from monitor_core.settings import (
+    DATA_DIR,
+    DB_FILE,
+    LOG_DIR,
+    PROJECT_ROOT,
+    SERVER_HOST,
+    SERVER_LOG_DIR,
+    SERVER_PORT,
+)
 
 # ========================================================
 # Flask
 # ========================================================
-load_dotenv()
-
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.abspath(os.getenv("GAME_MONITOR_DATA_DIR", os.path.join(PROJECT_ROOT, "data")))
-DB_FILE = os.path.abspath(os.getenv("GAME_MONITOR_DB_PATH", os.path.join(DATA_DIR, "game_data.db")))
-SERVER_LOG_DIR = os.path.abspath(
-    os.getenv(
-        "GAME_MANAGER_LOG_DIR",
-        r"D:\JPLuncher\apps\250625_v2_0_3_JumPing_Manager\file\log",
-    )
-)
-LOG_DIR = os.path.abspath(os.getenv("GAME_MONITOR_LOG_DIR", os.path.join(PROJECT_ROOT, "logs")))
-SERVER_HOST = os.getenv("GAME_MONITOR_HOST", "127.0.0.1")
-SERVER_PORT = int(os.getenv("GAME_MONITOR_PORT", "8081"))
-
 web = Flask(__name__)
 web.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "development-only-change-me")
 web.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -56,7 +51,7 @@ socketio = SocketIO(web, cors_allowed_origins="*", ping_timeout=60, ping_interva
 OFFSET_FILE = "log_offset.dat"
 PAD_COUNT = 4
 
-base_path = PROJECT_ROOT
+base_path = str(PROJECT_ROOT)
 key_path = os.path.join(base_path, "config", "google_key.json")
 gc = None
 sh = None 
@@ -474,17 +469,6 @@ parse_stats = {
 # ========================================================
 # DB 초기화
 # ========================================================
-def get_db_connection(timeout=30):
-    """Open the local SQLite database with settings safe for concurrent web/log access."""
-    db_parent = os.path.dirname(DB_FILE)
-    if db_parent:
-        os.makedirs(db_parent, exist_ok=True)
-    connection = sqlite3.connect(DB_FILE, timeout=timeout)
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
-    return connection
-
-
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
