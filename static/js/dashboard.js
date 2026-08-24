@@ -11,6 +11,11 @@ window.addEventListener('DOMContentLoaded', () => {
             // 워크인 목록만 즉시 갱신
             refreshWalkInList();
         });
+        socket.on('naver_reservations_synced', () => {
+            // Chrome extension delivers new/cancelled Naver bookings here.
+            // Refresh the waiting list immediately without a page reload.
+            refreshWalkInList();
+        });
         socket.on('room_or_queue_changed', () => {
             // 방 상태/대기리스트 변경 시 전체 갱신
             refreshRoomAndQueue();

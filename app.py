@@ -35,6 +35,7 @@ from monitor_core.settings import (
     SERVER_PORT,
 )
 from monitor_modules.naver_reservations import create_naver_reservations_blueprint
+from monitor_modules.self_reservation_schema import ensure_self_reservation_schema
 
 # ========================================================
 # Flask
@@ -768,6 +769,10 @@ def init_db():
                 detail TEXT NOT NULL DEFAULT '',
                 started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 completed_at TIMESTAMP)''')
+
+    # New online reservation/payment foundation.  It is independent from the
+    # legacy store-operation bookings table and is safe to migrate to cloud DB.
+    ensure_self_reservation_schema(cur)
 
     # Existing-table indexes: additive only, safe for the current schema.
     cur.execute('CREATE INDEX IF NOT EXISTS idx_game_records_time_pad ON game_records(time, pad_id)')
