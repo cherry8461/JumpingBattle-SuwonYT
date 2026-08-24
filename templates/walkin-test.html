@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>점핑배틀 영통점 - 결제 격발 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #111;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .test-box {
+            background-color: #222;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(255, 0, 0, 0.3);
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+        }
+        h1 {
+            color: #ff4757;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #ccc;
+            font-size: 14px;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
+        .btn-trigger {
+            background-color: #2ed573;
+            color: white;
+            border: none;
+            padding: 20px 40px;
+            font-size: 22px;
+            font-weight: bold;
+            border-radius: 10px;
+            cursor: pointer;
+            width: 100%;
+            box-shadow: 0 4px 10px rgba(46, 213, 115, 0.4);
+            transition: background 0.2s;
+        }
+        .btn-trigger:active {
+            background-color: #26af5f;
+            transform: scale(0.98);
+        }
+    </style>
+</head>
+<body>
+intent://payment?reqType=D1&amount=15000#Intent;action=android.intent.action.VIEW;category=android.intent.category.DEFAULT;category=android.intent.category.BROWSABLE;package=kr.co.kisvan.andagent;end
+<div class="test-box">
+    <h1>🚨1 KIS 결제 앱 강제 격발 테스트</h1>
+    <p>
+        인원수, 금액, 데이터 서버 저장 로직을 모두 배제한 순수 테스트 화면입니다.<br>
+        아래 버튼을 누르면 기기 내부의 <strong>kr.co.kisvan.andagent</strong> 앱 호출을 시도합니다.
+    </p>
+    
+    <button class="btn-trigger" onclick="requestKisPaymentRaw(event)">👉 결제 앱 깨우기 (15,000원)</button>
+</div>
+
+<script>
+function requestKisPaymentRaw(e) {
+    if (e && e.preventDefault) {
+        e.preventDefault();
+    }
+
+    var reqType = "D1"; 
+    var price = "15000"; 
+
+    // 🎯 [액티비티 경로를 빼고, 패키지명으로만 다이렉트 직행하는 크롬 표준 규격]
+    // 이렇게 짜면 브라우저가 내부 세부 경로를 몰라도 기기 안에 깔린 'kr.co.kisvan.andagent' 앱의 메인 화면을 강제로 뿜어냅니다.
+    var intentUrl = "intent://payment" +
+                    "?reqType=" + reqType +
+                    "&amount=" + price +
+                    "#Intent;" +
+                    "action=android.intent.action.VIEW;" +
+                    "category=android.intent.category.DEFAULT;" +
+                    "category=android.intent.category.BROWSABLE;" +
+                    "package=kr.co.kisvan.andagent;" + // 👈 브라우저가 기기 안에서 찾아낼 타겟 앱 패키지명
+                    "end";
+
+    alert("[최종 격발] 패키지 직행 모드로 전환!\n확인을 누르면 기기 안의 결제 엔진을 강제로 깨웁니다.");
+
+    try {
+        window.location.href = intentUrl;
+    } catch (error) {
+        alert("[에러] " + error.message);
+    }
+    
+    return false;
+}
+</script>
+
+</body>
+</html>

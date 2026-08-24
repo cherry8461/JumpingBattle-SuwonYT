@@ -1,0 +1,95 @@
+body { font-family: sans-serif; background: #f8f9fa; margin: 20px; color: #333; }
+.page-header { margin-bottom: 20px; }
+.page-header h1 { font-size: 22px; margin: 0; }
+.page-header p { font-size: 13px; color: #666; }
+
+/* 컨트롤 바 (정산페이지와 유사) */
+.control-bar {
+    display: flex;
+    gap: 8px;
+    background: white;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    margin-bottom: 20px;
+    align-items: center;
+}
+input[type="date"] { padding: 6px; border: 1px solid #ccc; border-radius: 4px; }
+button { padding: 7px 12px; border: 1px solid #ddd; background: #fff; cursor: pointer; border-radius: 4px; font-weight: bold; }
+button.primary { background: #28a745; color: white; border: none; }
+button:hover { background: #f2f2f2; }
+button.primary:hover { background: #218838; }
+
+/* 레이아웃 */
+.room-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 8px;}
+.room-section { background: white; border-radius: 8px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+.room-title { background: #4a5568; color: white; margin: 0; padding: 10px 15px; font-size: 16px; }
+
+/* 테이블 */
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 3px; text-align: center; border-bottom: 1px solid #eee; font-size: 12px; }
+th { background: #fcfcfc; color: #777; font-weight: bold; }
+
+/* 상태 칩 */
+.status-chip { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+.is-paid { background: #e6fffa; color: #2c7a7b; }
+.is-unpaid { background: #fff5f5; color: #c53030; }
+.phone-cell { color: #0056b3; font-weight: 500; }
+.empty-row { padding: 30px; color: #aaa; font-style: italic; }
+
+/* 탭 메뉴 스타일 */
+.tab-menu {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #ddd;
+    padding: 0 20px;
+}
+
+.tab-btn {
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    color: #666;
+    border-bottom: 3px solid transparent;
+}
+
+.tab-btn.active {
+    color: #007bff;
+    border-bottom: 3px solid #007bff;
+}
+
+/* 탭 컨텐츠 제어 */
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+/* 워크인 테이블 스타일 */
+.walkin-table-container {
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.walkin-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.walkin-table th, .walkin-table td {
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+    text-align: center;
+}
+
+.walkin-table th {
+    background-color: #f8f9fa;
+}

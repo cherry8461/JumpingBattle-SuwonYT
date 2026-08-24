@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <!-- Socket.IO 클라이언트 -->
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <title>점핑배틀 수원영통점 정산 보드</title>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}" />
+</head>
+<body>
+    <div class="top-bar">
+        <div class="header-left">
+            <img src="{{ url_for('static', filename='image/logo.svg') }}" alt="점핑배틀 로고" class="header-logo">
+            <h2 class="header-title">수원영통점</h2>
+            <span id="currentDate" class="today-date"></span>
+            <span id="holidaySyncNotice">(공휴일 자동연동)</span>
+            <span class="day-type-wrap">
+                <span id="dayTypeDisplay" class="day-type-label">평일</span>
+                <span id="dayTypeForcedNotice" style="display:none;">(강제변경됨)</span>
+            </span>
+            <button id="forceDayTypeBtn" onclick="toggleForcedDayType()">주말</button>
+            <span>성인: <input type="number" id="adultPrice" value="6000"></span>
+            <span>학생: <input type="number" id="childPrice" value="4000"></span>       
+        </div>
+        <!-- <div class="header-right">
+            <button onclick="saveAllBookings()" class="btn-save-bookings">💾 엑셀저장</button>
+            <button onclick="window.location.href='/settlement'" class="btn-save-bookings" style="margin-left: 6px;">🧾 정산페이지</button>
+        </div>
+    -->
+        <div class="header-right">
+            <div class="top-controls">
+                <button id="view-all-btn" onclick="toggleViewAll()">전체보기</button>
+            </div>
+            <div class="date-filter-container">
+                <label for="dashboard-date">조회 날짜</label>
+                <div class="date-input-group">
+                    <input type="date" id="dashboard-date" onchange="loadBookings()">
+                    <button type="button" class="btn-today-shortcut" onclick="setToToday()">오늘</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="main-wrapper">
+        <!-- 정산 (col1-2 / row1) -->
+        <div class="settlement-panel">
+            <div class="dashboard-settlement-strip" id="settlementStrip">
+                <div class="settle-box-title">정산</div>
+                <div class="settle-box-row settle-row-topline">
+                    <div class="settle-box-row settle-row-total">
+                        <span>전체</span>
+                        <b id="dashboardSettleTotal">0</b><span>원</span>
+                    </div>
+                    <div class="settle-box-row settle-row-pass-coupon">
+                        <div class="settle-pass-coupon-col">
+                            <span class="settle-inline-title">다회권</span>
+                            <span class="settle-inline-value">성인<b id="dashboardSettlePassAdult">0</b> / 학생<b id="dashboardSettlePassStudent">0</b></span>
+                        </div>
+                        <div class="settle-pass-coupon-col">
+                            <span class="settle-inline-title">쿠폰</span>
+                            <span class="settle-inline-value">성인<b id="dashboardSettleCouponAdult">0</b> / 학생<b id="dashboardSettleCouponStudent">0</b></span>
+                        </div>
+                    </div>
+                </div>                
+                <div class="settle-box-row settle-row-payment">
+                    <div class="settle-col">
+                        <span class="settle-col-title">카드</span>
+                        <span class="settle-col-value"><b id="dashboardSettleCard">0</b>원</span>
+                    </div>
+                    <div class="settle-col">
+                        <span class="settle-col-title">계좌</span>
+                        <span class="settle-col-value"><b id="dashboardSettleTransfer">0</b>원</span>
+                    </div>
+                    <div class="settle-col">
+                        <span class="settle-col-title">현금</span>
+                        <span class="settle-col-value"><b id="dashboardSettleCash">0</b>원</span>
+                    </div>
+                </div>
+                <div class="settle-box-row settle-row-deposit settle-row-deposit-noshow">
+                    <div class="settle-col settle-col-deposit">
+                        <span class="settle-col-title">예약금</span>
+                        <span class="settle-col-value"><b id="dashboardSettleDeposit">0</b>원</span>
+                    </div>
+                    <div class="settle-col settle-row-noshow">
+                        <span class="settle-col-title">당일취소&노쇼</span>
+                        <span class="settle-col-value"><b id="dashboardSettleNoShow">0</b>원</span>
+                        <div class="settle-noshow-actions">
+                            <input type="number" id="dashboardNoShowInput" class="settle-noshow-input" min="0" max="99" step="1" value="0" oninput="addDashboardNoShowAmount()">
+                        </div>
+                    </div>
+                    <div class="settle-col settle-row-cash-expense">
+                        <span class="settle-col-title">현금지출</span>
+                        <div class="settle-noshow-actions settle-cash-expense-actions">
+                            <input type="text" id="dashboardCashExpenseInput" class="settle-noshow-input settle-cash-expense-input" inputmode="numeric" placeholder="금액" oninput="handleDashboardCashExpenseInput(this)">
+                        </div>
+                    </div>                              
+                </div>
+            </div>
+        </div>
+
+        <!-- 빠른예약 (col3-5 / row1) -->
+        <div class="quickbook-panel">
+            <div class="booking-bar" id="bookingBar">
+                <div class="booking-utility-row">
+                    <span id="minuteBoundaryTimer" class="minute-boundary-timer">현재시간 --:--:--</span>
+                </div>
+                <div class="booking-form-row booking-form-row-primary">
+                    <div class="booking-input-group">
+                        <label>예약시간:</label>
+                        <select id="bookTime"></select>
+                    </div>
+                    <div class="booking-input-group">
+                        <label>룸:</label>
+                        <span class="room-radio-group">
+                            <label class="room-radio-label"><input type="radio" name="bookRoom" value="C1">C1</label>
+                            <label class="room-radio-label"><input type="radio" name="bookRoom" value="C2">C2</label>
+                            <label class="room-radio-label"><input type="radio" name="bookRoom" value="B1">B1</label>
+                            <label class="room-radio-label"><input type="radio" name="bookRoom" value="B2">B2</label>
+                        </span>
+                    </div>
+                    <div class="booking-form-row booking-form-row-checks">
+                        <div class="booking-input-group booking-check-group">
+                            <label class="check-label">
+                                <input type="checkbox" id="bookDeposit"> 예약금
+                            </label>
+                        </div>  
+                    </div>
+                </div>
+                <div class="booking-form-row booking-form-row-secondary">
+                    <div class="booking-input-group">
+                        <label>성함:</label>
+                        <input type="text" id="bookName" placeholder="성함">
+                    </div>
+                    <div class="booking-input-group">
+                        <label>전화:</label>
+                        <input type="text" id="bookPhone" placeholder="전화번호" inputmode="numeric" oninput="this.value = this.value.replace(/[^0-9]/g, '');">
+                    </div>
+                    <div class="booking-input-group">
+                        <label>인원:</label>
+                        <input type="number" id="bookPeople">
+                    </div>
+                    <div class="booking-input-group booking-check-group">
+                        <label class="check-label">
+                            <input type="checkbox" id="bookPartyRoom"> 파티룸
+                        </label>
+                    </div>                    
+                </div>
+                
+                <div class="booking-form-row booking-form-row-actions">
+                    <!-- <div class="booking-input-group booking-grace-group">
+                        <label>예약유예(분):</label>
+                        <input type="number" id="reservationGraceMinutes" min="0" max="30" value="3" onchange="onReservationGraceMinutesChanged(this)">
+                    </div> -->
+                    <div class="booking-input-group">
+                        <label>팀명:</label>
+                        <input type="text" id="bookTeam" placeholder="팀명" maxlength="10">
+                    </div>
+                    <div class="booking-input-group">
+                        <label>난이도:</label>
+                        <input type="text" id="bookLevel" placeholder="초성입력" onfocus="prepareLevelInput(this)" onclick="clearPreparedLevelInput(this)" oninput="autoLevel(this)">
+                    </div>
+                    <button onclick="addBookingFromBar()" class="btn-quick-booking">➕ 빠른 예약추가</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 워크인 대기: row 1-2 span -->
+        <div class="walkin-panel" id="walkinPanel">
+            <!-- 워크인 카드가 동적으로 생성됩니다 -->
+        </div>
+<!--
+        <div class="deposit-panel" id="depositPanel">
+            <div class="deposit-header">실시간 입금 내역</div>
+            <div id="depositList">                </div>
+        </div> 
+-->
+        <!-- 게임룸 상태 (col2-5 / row2) -->
+        <div class="room-status-container" id="roomStatusContainer">
+            <!-- 룸 상태가 동적으로 생성됩니다 -->
+        </div>
+
+        <!-- 타임테이블 (col1-5 / row3) -->
+        <div class="timeline-container">
+            <div class="timeline-overlay-top" id="timelineOverlayTop"></div>
+            <table class="timeline-table">
+                <tbody id="timelineBody"></tbody>
+            </table>
+            <div class="timeline-overlay-bottom" id="timelineOverlayBottom"></div>
+        </div>
+
+        <!-- 기타판매 (col6 / row1-3) -->
+        <div class="beverage-container">
+            <div class="supply-panel-header">
+                <div class="supply-header-row">
+                    <div class="supply-header-left">
+                        <h3 class="supply-panel-title">
+                            <span class="supply-title-wrap">
+                                기타 판매
+                                <span class="unit-help">
+                                    <button type="button" class="unit-help-btn" aria-label="단가 정보">?</button>
+                                    <span class="unit-help-tip">
+                                        <span class="unit-help-tip-title">단가</span>
+                                        <span class="unit-help-tip-grid">
+                                            <span class="unit-help-tip-item">슬러시 1,500원</span>
+                                            <span class="unit-help-tip-item">파우치 1,500원</span>
+                                            <span class="unit-help-tip-item">음료세트 2,000원</span>
+                                            <span class="unit-help-tip-item">얼음컵 1,000원</span>
+                                            <span class="unit-help-tip-item">양말 1,000원</span>
+                                            <span class="unit-help-tip-item">사진 2,000원</span>
+                                            <span class="unit-help-tip-item">다회권 성인 56,000원</span>
+                                            <span class="unit-help-tip-item">다회권 학생 40,000원</span>
+                                            <span class="unit-help-tip-item unit-help-tip-item-empty" aria-hidden="true">&nbsp;</span>
+                                        </span>
+                                    </span>
+                                </span>
+                            </span>
+                        </h3>
+                    </div>
+                    <div class="supply-header-total">총 결제: <span id="supplyGrandTotal">0</span>원</div>
+                </div>
+                <div class="supply-total-breakdown"><span class="supply-total-card">카드: <span id="supplyTotalCard">0</span>원</span> / <span class="supply-total-cash">현금: <span id="supplyTotalCash">0</span>원</span> / <span class="supply-total-transfer">계좌: <span id="supplyTotalTransfer">0</span>원</span></div>
+                <div class="supply-total-extra">
+                    <span class="supply-total-pass">다회권: <span id="supplyTotalPass">0</span>원</span>
+                    <span class="supply-total-sep"> / </span>
+                    <span class="supply-total-party">파티룸: <span id="supplyTotalParty">0</span>원</span>
+                </div>
+            </div>
+
+            <table class="special-pay-table">
+                <thead>
+                    <tr>
+                        <th class="special-pay-col-item">항목</th>
+                        <th class="special-pay-col-amount">카드</th>
+                        <th class="special-pay-col-amount">현금</th>
+                        <th class="special-pay-col-amount">계좌</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="row-theme-purple">
+                        <td class="special-pay-item">
+                            <label class="party-inline-check">
+                                <span>파티룸</span>
+                                <span class="party-inline-sub">(<input type="checkbox" id="spPartyIsDeposit" onchange="updateSupplyTotals()">예약금)</span>
+                            </label>
+                        </td>
+                        <td><input type="text" class="currency-input" inputmode="numeric" id="spPartyCard" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
+                        <td><input type="text" class="currency-input" inputmode="numeric" id="spPartyCash" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
+                        <td><input type="text" class="currency-input" inputmode="numeric" id="spPartyTransfer" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
+                    </tr>
+                    <tr class="row-theme-amber">
+                        <td class="special-pay-item">
+                            <div class="etc-item-wrap">
+                                <span>기 타 </span>
+                                <input type="text" id="spEtcText" class="etc-item-text" maxlength="30" placeholder="기타 항목명">
+                            </div>
+                        </td>
+                        <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcCard" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
+                        <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcCash" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
+                        <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcTransfer" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="supply-two-col">
+                <table class="supply-table supply-table-compact">
+                    <thead>
+                        <tr>
+                            <th class="supply-col-item">항목</th>
+                            <th class="supply-col-pay">카드</th>
+                            <th class="supply-col-pay">현금</th>
+                            <th class="supply-col-pay">계좌</th>
+                        </tr>
+                    </thead>
+                    <tbody id="supplyTableBodyCol1"></tbody>
+                </table>
+
+                <table class="supply-table supply-table-compact">
+                    <thead>
+                        <tr>
+                            <th class="supply-col-item">항목</th>
+                            <th class="supply-col-pay">카드</th>
+                            <th class="supply-col-pay">현금</th>
+                            <th class="supply-col-pay">계좌</th>
+                        </tr>
+                    </thead>
+                    <tbody id="supplyTableBodyCol2"></tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="4" class="supply-input-footer">
+                                <div class="supply-footer-row">
+                                    <span class="supply-footer-sum">합계: <span id="supplyFooterTotal">0</span>원</span>
+                                    <button class="supply-apply-btn" onclick="applySupplyInputs()">입력</button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <div class="supply-history">
+                <div class="supply-history-table-wrap" id="supplyHistoryTableWrap">
+                    <table class="supply-history-table">
+                        <colgroup>
+                            <col>
+                            <col>
+                            <col>
+                            <col>
+                            <col>
+                            <col>
+                            <col>
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>시간</th>
+                                <th>항목</th>
+                                <th>수량</th>
+                                <th>카드</th>
+                                <th>현금</th>
+                                <th>계좌</th>
+                                <th>삭제</th>
+                            </tr>
+                        </thead>
+                        <tbody id="supplyHistoryBody"></tbody>
+                    </table>
+                    <div id="supplyHistoryEmpty" class="supply-history-empty">아직 입력된 내역이 없습니다.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 파티룸 삭제 선택 다이얼로그 -->
+    <!-- 일반 팀카드 삭제 확인 다이얼로그 -->
+    <div id="generalDeleteDialog">
+        <div class="prd-box">
+            <p>삭제하시겠습니까?</p>
+            <div class="prd-buttons">
+                <button class="prd-btn-all" id="gdBtnConfirm">삭제</button>
+                <button class="prd-btn-cancel" id="gdBtnCancel">취소</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="partyRoomDeleteDialog">
+        <div class="prd-box">
+            <p>파티룸을 어떻게 삭제할까요?</p>
+            <div class="prd-buttons">
+                <button class="prd-btn-all" id="prdBtnAll">전체 삭제</button>
+                <button class="prd-btn-one" id="prdBtnOne">하나만 삭제</button>
+                <button class="prd-btn-cancel" id="prdBtnCancel">취소</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="paymentModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-header-row">
+                    <span class="team-head"><span class="team-head-label">팀명</span><span id="paymentTeamName" onclick="editField(this, 'team')"></span><span id="paymentBookerBadge" class="payment-booker-badge inactive" onclick="togglePaymentBookerBadge(); event.stopPropagation();">예약:<span class="reservation-time-emph">--:--</span></span></span>
+                    <span class="payment-copy-group-tools">
+                        <span id="paymentCopyGroupPicker" class="payment-copy-group-picker" style="display:none;">
+                            <select id="paymentCopyGroupSelect" class="payment-copy-group-select" onchange="onPaymentCopyGroupSelected(event)">
+                                <option value="">오늘 그룹 선택</option>
+                            </select>
+                        </span>
+                        <span id="paymentCopyGroupBadge" class="payment-copy-group-badge is-empty" onclick="onPaymentCopyGroupBadgeClick(event)" title="클릭해 오늘 그룹 선택">-</span>
+                    </span>
+                </div>
+                <small class="payment-meta">
+                    <span class="payment-meta-item meta-name">
+                        <div>
+                            <span class="payment-meta-label">성함</span><span id="paymentName" onclick="editField(this, 'name')"></span>
+                        </div>
+                        <div>
+                            <span class="payment-meta-label">전화</span><span id="paymentPhone" onclick="editField(this, 'phone')"></span>
+                        </div>
+                    </span>
+                    <span class="payment-meta-item meta-room">
+                        <span class="payment-meta-label">방</span>
+                        <div class="meta-room-controls">
+                            <select id="paymentRoomSelect" class="room-select-inline" onchange="onPaymentRoomSelectChange()">
+                                <option value="C1">C1</option>
+                                <option value="C2">C2</option>
+                                <option value="B1">B1</option>
+                                <option value="B2">B2</option>
+                            </select>
+                            <div class="room-flag-grid">
+                                <label class="room-flag-label"><input type="checkbox" id="roomFlagF">F</label>
+                                <label class="room-flag-label"><input type="checkbox" id="roomFlagS">소</label>
+                                <label class="room-flag-label"><input type="checkbox" id="roomFlagM">중</label>
+                                <label class="room-flag-label"><input type="checkbox" id="roomFlagL">대</label>
+                            </div>
+                        </div>
+                        <span id="paymentRoom" style="display:none;"></span>
+                    </span>
+                    <span class="payment-meta-item meta-level"><span class="payment-meta-label">난이도</span><span id="paymentLevel" onclick="editField(this, 'level')"></span></span>
+
+                </small>
+            </div>
+    
+            <div class="modal-section">
+                <label>인원 현황</label>
+                <div class="modal-box people-box">
+                    <div class="people-input-columns">
+                        <div class="people-input-column total">
+                            <label>전체</label>
+                            <input type="number" id="totalPeople" onchange="calculatePayment()">
+                        </div>
+                        <div class="people-input-column adult">
+                            <label>성인</label>
+                            <div class="people-input-row">
+                                <div class="people-input-item">
+                                    <label>인원</label>
+                                    <input type="number" id="adultCount" min="0" onchange="validatePassCounts(); calculatePayment()">
+                                </div>
+                                <div class="people-input-item">
+                                    <label>현금</label>
+                                    <input type="number" id="nonCardAdultCount" min="0" onchange="calculatePayment()">
+                                </div>
+                                <div class="people-input-item">
+                                    <label>다회</label>
+                                    <input type="number" id="adultPassCount" min="0" onchange="validatePassCounts(); calculatePayment()">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="people-input-column child">
+                            <label>학생</label>
+                            <div class="people-input-row">
+                                <div class="people-input-item">
+                                    <label>인원</label>
+                                    <input type="number" id="childCount" min="0" onchange="validatePassCounts(); calculatePayment()">
+                                </div>
+                                <div class="people-input-item">
+                                    <label>다회</label>
+                                    <input type="number" id="childPassCount" min="0" onchange="validatePassCounts(); calculatePayment()">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="people-input-column coupon">
+                            <label>무료쿠폰</label>
+                            <input type="number" id="couponCount" min="0" onchange="calculatePayment()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+    
+            <!-- 결제 수단 입력 -->
+            <div class="modal-section">
+                <div class="payment-method-header">
+                    <label class="payment-method-title">결제 수단</label>
+                    <span class="payment-method-divider">|</span>
+                    <label class="payment-option-label"><input type="checkbox" id="depositPaid" onchange="calculatePayment()"> 예약금</label>
+                    <label class="payment-option-label"><input type="checkbox" id="partyRoom" onchange="togglePartyRoomMode()"> 파티룸</label>
+                </div>
+                <div class="modal-box">
+                    <div class="payment-method-grid">
+                        <div class="payment-method-item">
+                            <label>카드</label>
+                            <input type="number" id="cardInput" placeholder="0" min="0" onchange="calculatePayment()">
+                        </div>
+                        <div class="payment-method-item">
+                            <label>현금</label>
+                            <input type="number" id="cashInput" placeholder="0" min="0" onchange="calculatePayment()">
+                        </div>
+                        <div class="payment-method-item">
+                            <label>계좌</label>
+                            <input type="number" id="transferInput" placeholder="0" min="0" onchange="calculatePayment()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+    
+            <!-- 결제 금액 정보 -->
+            <div class="payment-info-box">
+                <div class="payment-info-section">
+                    <span class="payment-section-title">결제예정 금액</span>
+                    <div class="payment-total-row">
+                        합계: <span id="paymentAmount">0</span>원 <span id="adultChildSplitLine">(성인: <span id="adultAmount">0</span>원 + 학생: <span id="childAmount">0</span>원 - 예약금: <span id="splitDepositAmount">0</span>원)</span>
+                    </div>
+                    <div class="payment-cash-row">현금결제시: <span id="cashPaymentAmount">0</span>원</div>
+                    <div id="paymentBreakdown">
+                        <div class="payment-base-amount">기본금액: <span id="baseAmount">0</span>원 <span id="baseAmountDetail"></span></div>
+                        <div id="depositLine">예약금: <span id="depositAmount">0</span>원</div>
+                        <div id="discountLine" style="display:none;">
+                            <div class="payment-discount-label">할인금액: <span id="discountAmount">0</span>원</div>
+                            <div id="discountAmountDetail"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="payment-status-section">
+                    <div class="payment-info-section">
+                        <span class="payment-section-title">결제 현황</span>
+                    </div>
+                    <div class="payment-amounts-row">
+                        <div>카드: <span id="cardPayAmount">0</span>원</div>
+                        <div>현금: <span id="cashPayAmount">0</span>원</div>
+                        <div>계좌: <span id="transferPayAmount">0</span>원</div>
+                    </div>
+                </div>
+            </div>
+            <div id="payDiffBox" style="display:none;">
+                <span>필요: <span id="needAmount">0</span>원</span>
+                &nbsp;&nbsp;
+                <span>초과: <span id="excessAmount">0</span>원</span>
+            </div>
+    
+            <div id="paymentMatchStatus" style="display:none;"></div>
+    
+            <div class="modal-buttons">
+                <button class="delete-payment-btn" onclick="deleteCurrentPaymentCard()">삭제</button>
+                <div class="modal-buttons-right">
+                    <button class="save-payment-btn" onclick="savePaymentInfo()">확인</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+<script src="{{ url_for('static', filename='js/settle_core.js') }} " ></script>
+<script src="{{ url_for('static', filename='js/settlement.js') }}"></script>
+<script src="{{ url_for('static', filename='js/google_sheets.js') }}" ></script>      
+<script src="{{ url_for('static', filename='js/dashboard.js') }}" ></script>
+</body>
+</html>

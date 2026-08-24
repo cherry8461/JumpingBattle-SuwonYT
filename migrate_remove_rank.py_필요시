@@ -1,0 +1,68 @@
+import sqlite3
+import sys
+
+DB_PATH = "game_data.db"   # 🔧 네 DB 파일명으로 수정
+
+def column_exists(cursor, table, column):
+    cursor.execute(f"PRAGMA table_info({table})")
+    return column in [row[1] for row in cursor.fetchall()]
+
+def migrate_remove_rank():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    # 테이블 존재 확인
+    cur.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='ranking'
+    """)
+    if not cur.fetchone():
+        print("❌ ranking 테이블이 존재하지 않습니다.")
+        conn.close()
+        return
+
+    # rank 컬럼 존재 확인
+    if not column_exists(cur, "ranking", "rank"):
+        print("✅ rank 컬럼 없음 — 마이그레이션 필요 없음")
+        conn.close()
+        return
+
+    print("🚧 rank 컬럼 제거 마이그레이션 시작")
+
+    # 1️⃣ 새 테이블 생성
+    cur.execute("""
+        CREATE TABLE ranking_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            time TEXT,
+            pad TEXT,
+            size TEXT,
+            level TEXT,
+            team TEXT,
+            score INTEGER
+        )
+    """)
+
+    # 2️⃣ 데이터 복사 (rank 제외)
+    cur.execute("""
+        INSERT INTO ranking_new (id, time, pad, size, level, team, score)
+        SELECT id, time, pad, size, level, team, score
+        FROM ranking
+    """)
+
+    # 3️⃣ 기존 테이블 삭제
+    cur.execute("DROP TABLE ranking")
+
+    # 4️⃣ 테이블 이름 변경
+    cur.execute("ALTER TABLE ranking_new RENAME TO ranking")
+
+    conn.commit()
+    conn.close()
+
+    print("✅ 마이그레이션 완료: rank 컬럼 제거됨")
+
+if __name__ == "__main__":
+    try:
+        migrate_remove_rank()
+    except Exception as e:
+        print("🔥 마이그레이션 실패:", e)
+        sys.exit(1)

@@ -1,0 +1,349 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #f8fafc;
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.settlement-page {    
+    margin: 0 auto;
+    padding: 18px;
+}
+
+.settlement-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.settlement-header h1 {
+    margin: 0;
+    font-size: 28px;
+    color: #111827;
+}
+
+.settlement-header p {
+    margin: 4px 0 0;
+    color: #475569;
+    font-size: 14px;
+}
+
+.control-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+button {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    font-weight: 700;
+    padding: 7px 11px;
+    cursor: pointer;
+}
+
+button.primary {
+    background: #0369a1;
+    border-color: #0369a1;
+    color: #ffffff;
+}
+
+input[type="date"],
+input[type="time"],
+input[type="text"],
+input[type="number"] {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 13px;
+}
+
+.total-cards {
+    margin-top: 12px;
+    margin-bottom: 12px;
+}
+
+/* 정산 요약 박스 (대시보드 정산박스 스타일) */
+.settle-summary {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.settle-grand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.settle-summary-title {
+    font-size: 13px;
+    color: #475569;
+    font-weight: 700;
+}
+
+.settle-summary-total {
+    font-size: 30px;
+    font-weight: 900;
+    color: #0f172a;
+}
+
+.settle-summary-value {
+    font-size: 20px;
+    font-weight: 900;
+    color: #0f172a;
+}
+
+.settle-summary-line {
+    font-size: 20px;
+    font-weight: 700;
+    color: #8f96a8;
+}
+
+.settle-breakdown {
+    display: grid;
+    grid-template-columns: 4.1fr 2.2fr 2.2fr 1.5fr;
+    align-items: start;
+    gap: 10px;
+}
+
+.settle-summary-team, .settle-summary-supply,
+.settle_summary-partyroom, .settle-summary-coupon {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background-color: #eceff5; 
+    border-radius: 10px;
+    padding: 14px 18px;
+}
+
+.settle-summary-col {
+    display: flex;
+    min-width: 110px;
+    align-items: baseline;
+    gap: 10px;
+    border-top: 1px solid #0f172a;
+    padding-top: 10px;
+}
+
+.settle-summary-team-title, .settle-summary-supply-title {
+    font-size: 15px;
+    color: #3a4658;
+    font-weight: 700;
+}
+.settle-summary-team-value, .settle-summary-supply-value {
+    font-size: 16px;
+    font-weight: 900;
+    color: #0f172a;
+}
+
+.settle-summary-col-value {
+    font-size: 14px;
+    font-weight: 900;
+    color: #0f172a;
+    border-right: 1px solid #8f96a8;
+    padding-right: 10px
+}
+
+/* 두 패널을 감싸는 부모 컨테이너 */
+.panels-container { /* HTML에서 부모 div에 이 클래스를 추가하세요 */
+    display: flex;
+    gap: 10px;          /* 패널 사이의 간격 */
+    align-items: flex-start; /* 패널들의 높이가 달라도 상단 정렬 */
+    width: 100%;
+}
+
+/* 팀 정산 패널 (60%) */
+.panels-container > .panel:first-child {
+    flex: 6;            /* 60% 비율 */
+    min-width: 0;       /* 테이블이 부모를 벗어나는 현상 방지 */
+}
+
+/* 기타판매 정산 패널 (40%) */
+.panels-container > .panel:last-child {
+    flex: 4;            /* 40% 비율 */
+    min-width: 0;       /* 테이블이 부모를 벗어나는 현상 방지 */
+}
+
+.panel {
+    margin-top: 12px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.panel-actions-bottom {
+    margin-top: 8px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.panel-head h2 {
+    margin: 0;
+    font-size: 18px;
+    color: #0f172a;
+}
+
+.panel-help {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.table-wrap {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    border-bottom: 1px solid #e2e8f0;
+    padding: 6px 4px;
+    text-align: center;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+th {
+    color: #334155;
+    background: #f8fafc;
+    font-weight: 800;
+}
+
+td .money-input {
+    width: 40px;
+}
+
+#supplyTable th:nth-child(4),
+#supplyTable td:nth-child(4) {
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    padding-left: 2px;
+    padding-right: 2px;
+}
+
+.team-compact, .supply-compact {
+    width: 48px;
+    padding: 4px 4px;
+    font-size: 12px;
+}
+
+.team-compact-2d, .supply-compact-2d {
+    width: 15px;
+    text-align: center;
+}
+
+.team-compact::-webkit-outer-spin-button,
+.team-compact::-webkit-inner-spin-button,
+.team-compact-2d::-webkit-outer-spin-button,
+.team-compact-2d::-webkit-inner-spin-button,
+.supply-compact::-webkit-outer-spin-button,
+.supply-compact::-webkit-inner-spin-button,
+.supply-compact-2d::-webkit-outer-spin-button,
+.supply-compact-2d::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.team-compact-2d[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.team-compact.time {
+    width: 55px;
+}
+
+.team-compact.room {
+    width: 40px;
+}
+
+.team-compact.deposit {
+    width: 30px;
+}
+
+.row-total {
+    font-weight: 800;
+    color: #0f172a;
+}
+
+.team-paid-toggle {
+    min-width: 78px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border-width: 1px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.team-paid-toggle.is-paid {
+    color: #065f46;
+    background: #ecfdf5;
+    border-color: #34d399;
+}
+
+.team-paid-toggle.is-unpaid {
+    color: #991b1b;
+    background: #fef2f2;
+    border-color: #fca5a5;
+}
+
+.team-paid-toggle.is-party-room,
+.team-paid-chip.is-party-room {
+    color: #ffffff;
+    background: #7c3aed;
+    border-color: #6d28d9;
+}
+
+.team-paid-chip {
+    display: inline-block;
+    min-width: 66px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.team-paid-chip.is-paid {
+    color: #065f46;
+    background: #ecfdf5;
+    border-color: #34d399;
+}
+
+.team-paid-chip.is-unpaid {
+    color: #991b1b;
+    background: #fef2f2;
+    border-color: #fca5a5;
+}
+
+@media (max-width: 768px) {
+    .settlement-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전체 팀 목록</title>
+    <style>
+        body { font-family: sans-serif; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 6px; text-align: left; font-size: 12px; }
+        th { background-color: #f2f2f2; }
+        .status-completed { color: green; }
+        .status-not-completed { color: red; }
+        
+        .search-container {
+            margin-bottom: 12px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .search-container input[type="date"] {
+            padding: 6px;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .search-container button {
+            padding: 6px 12px;
+            font-size: 13px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .search-container button:hover {
+            background-color: #218838;
+        }
+        .room-sections {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .room-section {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #fff;
+        }
+        .room-title {
+            margin: 0;
+            padding: 10px 12px;
+            font-size: 15px;
+            font-weight: 700;
+            color: #374151;
+            background: #f3f4f6;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .empty-row {
+            color: #9ca3af;
+            text-align: center;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="search-container">
+        <label for="searchDate" style="font-weight: bold; color: #495057;">📅 날짜 검색:</label>
+        <input type="date" id="searchDate">
+        <button onclick="fetchTeamList()">조회</button>
+    </div>
+
+    <h1>전체 팀 목록</h1>
+    <div class="room-sections" id="roomSections"></div>
+
+    <script>
+        // 1. 페이지 로드 시 오늘 날짜를 기본값으로 설정
+        function setDefaultDate() {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            document.getElementById('searchDate').value = `${year}-${month}-${day}`;
+        }
+
+        // 2. 서버에서 선택한 날짜의 팀 목록을 가져와 테이블을 그리는 함수
+        async function fetchTeamList() {
+            const searchDate = document.getElementById('searchDate').value;
+            if (!searchDate) return;
+
+            try {
+                // 서버 API 구조에 맞게 엔드포인트를 수정할 수 있습니다. (예: /api/teams?date=YYYY-MM-DD)
+                const res = await fetch(`/api/teams?date=${searchDate}`);
+                if (!res.ok) throw new Error('데이터를 불러오는데 실패했습니다.');
+                const data = await res.json();
+
+                const roomOrder = ['C1', 'C2', 'B1', 'B2'];
+                const grouped = { C1: [], C2: [], B1: [], B2: [] };
+                data.forEach(item => {
+                    const room = (item.room || '').toUpperCase();
+                    if (grouped[room]) grouped[room].push(item);
+                });
+
+                const container = document.getElementById('roomSections');
+                container.innerHTML = '';
+
+                roomOrder.forEach(room => {
+                    const section = document.createElement('section');
+                    section.className = 'room-section';
+
+                    const title = document.createElement('h2');
+                    title.className = 'room-title';
+                    title.textContent = room;
+
+                    const table = document.createElement('table');
+                    table.innerHTML = `
+                        <thead>
+                            <tr>
+                                <th>이름</th>
+                                <th>팀명</th>
+                                <th>난이도</th>
+                                <th>인원</th>
+                                <th>방사이즈</th>
+                                <th>결제 상태</th>
+                                <th>게임 상태</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    `;
+
+                    const tbody = table.querySelector('tbody');
+                    const rows = grouped[room];
+                    if (!rows.length) {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = '<td colspan="7" class="empty-row">데이터 없음</td>';
+                        tbody.appendChild(tr);
+                    } else {
+                        rows.forEach(item => {
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td>${item.name || '-'}</td>
+                                <td>${item.team || '개인'}</td>
+                                <td>${item.level || '-'}</td>
+                                <td>${item.people || '-'}</td>
+                                <td>${item.room_size || '-'}</td>
+                                <td class="${item.is_paid ? 'status-completed' : 'status-not-completed'}">
+                                    ${item.is_paid ? '✅ 결제완료' : '❌ 미결제'}
+                                </td>
+                                <td>${item.game_status || '-'}</td>
+                            `;
+                            tbody.appendChild(tr);
+                        });
+                    }
+
+                    section.appendChild(title);
+                    section.appendChild(table);
+                    container.appendChild(section);
+                });
+            } catch (error) {
+                console.error("팀 목록 갱신 실패:", error);
+            }
+        }
+
+        // 3. 초기화 및 5초 주기 자동 갱신
+        window.onload = function() {
+            setDefaultDate();
+            fetchTeamList();
+            setInterval(fetchTeamList, 5000);
+        };
+    </script>
+</body>
+</html>

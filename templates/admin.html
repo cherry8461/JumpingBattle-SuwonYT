@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Admin - Ranking</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body {
+    background: #020617;
+    color: #e5e7eb;
+    font-family: "Segoe UI", sans-serif;
+}
+
+.container {
+    max-width: 1200px;
+    margin: auto;
+    padding: 20px;
+}
+
+h1, h2, h3 {
+    margin-bottom: 10px;
+}
+
+.card {
+    background: #020617;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+}
+
+input, select {
+    background: #020617;
+    border: 1px solid #1e293b;
+    color: #e5e7eb;
+    padding: 6px;
+    border-radius: 6px;
+}
+
+button {
+    background: #22c55e;
+    color: #022c22;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+button:hover {
+    background: #16a34a;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 10px;
+    border-bottom: 1px solid #1e293b;
+    text-align: center;
+}
+
+.actions a {
+    color: #ef4444;
+    text-decoration: none;
+    margin-left: 8px;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+    <h1>🛠 관리자 페이지</h1>
+
+    <!-- ================= 추가 ================= -->
+    <div class="card">
+        <h2>➕ 랭킹 추가</h2>
+
+        <form method="post" action="/admin/add">
+            날짜:
+            <input type="number" name="year" value="{{ now.year }}" style="width:60px"> -
+            <input type="number" name="month" value="{{ now.month }}" style="width:40px"> -
+            <input type="number" name="day" value="{{ now.day }}" style="width:40px">
+
+            시간:
+            <input type="number" name="hour" value="{{ now.hour }}" style="width:40px"> :
+            <input type="number" name="minute" value="0" style="width:40px">
+
+            룸:
+            <select name="pad_id">
+                {% for pid, pname in pad_map.items() %}
+                <option value="{{ pid }}">{{ pname }}</option>
+                {% endfor %}
+            </select>
+
+            사이즈:
+            <select name="size">
+                {% for s in sizes %}
+                <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+            </select>
+
+            레벨:
+            <select name="level">
+                {% for l in levels %}
+                <option value="{{ l }}">{{ l }}</option>
+                {% endfor %}
+            </select>
+
+            팀명:
+            <input type="text" name="team">
+
+            점수:
+            <input type="number" name="score" style="width:90px">
+
+            <button type="submit">추가</button>
+        </form>
+    </div>
+
+    <!-- ================= 관리 ================= -->
+    <div class="card">
+        <h2>📋 랭킹 관리</h2>
+<h3>🎮 PAD 상태</h3>
+<table border="1" cellpadding="6" cellspacing="0">
+  <tr>
+    <th>PAD</th>
+    <th>상태</th>
+<th>사이즈 / 레벨</th>
+  </tr>
+
+  {% for pid, name in pad_map.items() %}
+  <tr>
+    <td>{{ name }}</td>
+    <td>
+      {% if pad_status[pid] == "playing" %}
+        🟢 PLAYING
+      {% elif pad_status[pid] == "wait_rank" %}
+        🟡 WAIT RANK
+      {% else %}
+        ⚫ OFF
+      {% endif %}
+    </td>
+<td>
+  {% if pad_data.get(pid) %}
+    {{ pad_data[pid].size or "-" }}
+    /
+    {{ pad_data[pid].level or "-" }}
+  {% else %}
+    -
+  {% endif %}
+</td>
+  </tr>
+  {% endfor %}
+</table>
+<!-- ========================= -->
+<!-- 📊 로그 처리 통계 패널 -->
+<!-- ========================= -->
+<div style="
+    margin-bottom: 20px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: #1e1e1e;
+    color: #eee;
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-size: 14px;
+">
+    <div>✔ 저장 성공: <b style="color:#4caf50;">{{ log_stats.db_insert_success }}</b></div>
+    <div>🔁 중복 무시: <b style="color:#ff9800;">{{ log_stats.db_insert_duplicate }}</b></div>
+</div>
+
+<table>
+	<tr>
+<form method="get" action="/admin" style="margin-bottom:15px;">
+    <label>날짜 선택 :</label>
+    <input type="date" name="date" value="{{ search_date }}">
+    <button type="submit">검색</button>
+</form>
+	</tr>
+</table>
+        <table>   
+            <tr>
+                <th>No</th>
+                <th>ID</th>
+                <th>시간</th>
+                <th>PAD</th>
+                <th>사이즈</th>
+                <th>레벨</th>
+                <th>팀명</th>
+                <th>점수</th>
+                <th>관리</th>
+            </tr>
+
+            {% for r in rows %}
+            <tr>
+                <form method="post" action="/admin/update/{{ r.id }}">
+                    <td>{{ loop.index }}</td>   <!-- ✅ 순번 -->
+	        <td>{{ r.id }}</td>
+
+                    <td>
+                        <input name="time" value="{{ r.time }}" style="width:150px">
+                    </td>
+
+                    <td>{{ pad_map[r.pad_id] }}</td>
+
+                    <td>
+                        <select name="size">
+                            {% for s in sizes %}
+                            <option value="{{ s }}" {% if r.size == s %}selected{% endif %}>{{ s }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+
+                    <td>
+                        <select name="level">
+                            {% for l in levels %}
+                            <option value="{{ l }}" {% if r.level == l %}selected{% endif %}>{{ l }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+
+                    <td>
+                        <input name="team" value="{{ r.team }}" style="width:120px">
+                    </td>
+
+                    <td>
+                        <input type="number" name="score" value="{{ r.score }}" style="width:90px">
+                    </td>
+
+                    <td class="actions">
+                        <button type="submit">수정</button>
+                        <a href="/admin/delete/{{ r.id }}"
+                           onclick="return confirm('삭제할까요?')">삭제</a>
+                    </td>
+                </form>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+</body>
+</html>

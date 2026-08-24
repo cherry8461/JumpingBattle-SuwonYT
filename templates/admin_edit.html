@@ -1,0 +1,21 @@
+<h2>랭킹 수정</h2>
+
+<form method="post" action="{{ url_for('admin_update', id=row.id) }}">
+    시간:
+    <input type="text" name="time" value="{{ row.time }}"><br>
+
+    사이즈:
+    <input type="text" name="size" value="{{ row.size }}"><br>
+
+    레벨:
+    <input type="text" name="level" value="{{ row.level }}"><br>
+
+    팀명:
+    <input type="text" name="team" value="{{ row.team }}"><br>
+
+    점수:
+    <input type="number" name="score" value="{{ row.score }}"><br>
+
+    <button type="submit">저장</button>
+  <a href="/admin">취소</a>
+</form>

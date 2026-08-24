@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>정산 페이지</title>
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/settlement.css') }}" />
+</head>
+<body>
+    <div class="settlement-page">
+        <header class="settlement-header">
+            <div class="settlement-title-wrap">
+                <h1>정산 페이지</h1>
+            </div>
+            <div class="header-actions">
+                <button onclick="saveExcelBtn()">💾 정산저장</button>
+            </div>
+        </header>
+
+        <section class="control-bar">
+            <button type="button" id="prevDateBtn">전일</button>
+            <input type="date" id="settlementDate" />
+            <button type="button" id="nextDateBtn">익일</button>
+            <button type="button" id="todayDateBtn">오늘</button>
+            <button type="button" id="loadOverviewBtn">조회</button>
+            
+            <button type="button" id="adminLoginBtn" style="background-color: #4CAF50; color: white;">🛠️ 관리자 로그인</button>
+            <button type="button" id="adminLogoutBtn" style="background-color: #f44336; color: white; display: none;">🔒 로그아웃</button>
+        </section>
+
+        <div id="authStatusBadge" style="margin: 10px 0; font-weight: bold; color: #555;">👤 일반 모드</div>
+
+        <section class="total-cards" id="totalCards"></section>
+
+        <div class="panels-container">
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>게임 정산</h2>
+                </div>
+                <div class="table-wrap">
+                    <table id="teamTable">
+                        <thead>
+                            <tr>                            <th>순번</th>                            <th>시간</th>
+                                <th>룸</th>
+                                <th>팀</th>
+                                <th>성함</th>
+                                <th>인원수(성/학)</th>
+                                <th>결제</th>
+                                <th>예약금</th>
+                                <th>다회권(성/학)</th>
+                                <th>쿠폰</th>
+                                <th>카드</th>
+                                <th>현금</th>
+                                <th>계좌</th>
+                                <th>합계</th>
+                                <th>저장</th>
+                            </tr>
+                        </thead>
+                        <tbody id="teamTableBody"></tbody>
+                    </table>
+                </div>
+                <div class="panel-actions panel-actions-bottom">
+                    <button type="button" id="addTeamRowBtn">행 추가</button>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>기타판매 정산</h2>
+                </div>
+                <div class="table-wrap">
+                    <table id="supplyTable">
+                        <thead>
+                            <tr>
+                                <th>순번</th>
+                                <th>시간</th>
+                                <th>항목</th>
+                                <th>수량</th>
+                                <th>카드</th>
+                                <th>현금</th>
+                                <th>계좌</th>
+                                <th>합계</th>
+                                <th>저장</th>
+                            </tr>
+                        </thead>
+                        <tbody id="supplyTableBody"></tbody>
+                    </table>
+                </div>
+                <div class="panel-actions panel-actions-bottom">
+                    <button type="button" id="addSupplyRowBtn">행 추가</button>
+                </div>
+            </section>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/settle_core.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/google_sheets.js') }}" ></script>
+    <script src="{{ url_for('static', filename='js/settlement.js') }}"></script>
+</body>
+</html>

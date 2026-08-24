@@ -1,0 +1,1482 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width,
+               initial-scale=1.0,
+               maximum-scale=1.0,
+               user-scalable=no">
+<title>Jumping Rank</title>
+
+
+<style>
+
+
+
+/* =========================
+   GLOBAL / RESET
+========================= */
+html, body {
+    height: 100%;
+    overflow: hidden;   /* ⭐ 전체 스크롤 금지 */
+    touch-action: pan-y;   /* 화면 확대금지 */
+    overscroll-behavior: none;
+    /* 텍스트 드래그 선택 방지 */
+    -webkit-user-select: none; /* 사파리/크롬 */
+    -moz-user-select: none;    /* 파이어폭스 */
+    -ms-user-select: none;     /* 구형 IE */
+    user-select: none;
+}
+
+body {
+    margin: 0;
+    font-family: "Segoe UI", sans-serif;
+    background: #0f172a;
+    color: #e5e7eb;
+}
+
+
+
+/* =========================
+   LAYOUT
+========================= */
+.container {
+    max-width: 1100px;
+    margin: auto;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 5px;
+    position: relative;
+    z-index: 10;
+}
+
+/* 🔒 상단 고정 영역 */
+.fixed-header {
+    flex-shrink: 0;
+    background: inherit;
+    z-index: 20;
+}
+
+
+h1 {
+    text-align: center;
+    margin-bottom: 20px;
+    letter-spacing: 2px;
+    font-size: 3rem;
+    color: #e5e7eb;
+    transition: all 0.5s;
+}
+
+
+/* 🔽 랭킹 스크롤 영역 */
+.scroll-area {
+    flex: 1;
+    overflow-y: auto;          /* ⭐ 여기만 스크롤 */
+    padding-bottom: 120px;     /* TOP 버튼 여유 */
+}
+
+/* 스크롤바 숨김 (TV용) */
+.scroll-area::-webkit-scrollbar {
+    display: none;
+}
+
+
+/* =========================
+   FILTER / TABS
+========================= */
+.filter-wrapper {
+  display: grid;
+  grid-template-columns: auto 1fr auto; 
+  gap: 5px;
+  padding: 8px;
+  background: #0f172a;
+  border-radius: 28px;
+  align-items: start;      /* 세로 기준선 맞춤 */
+  justify-content: center;
+}
+
+.filter-col {
+  background: rgba(255,255,255,0.05);
+  padding: 10px;
+  border-radius: 20px;
+  justify-content: center;
+}
+
+/* 난이도 컬럼 */
+.filter-col.center {
+  min-width: 0; /* ⭐ overflow 방지 */
+  justify-content: center;
+}
+
+.filter-title {
+  color: #faca51;
+  font-size: 22px;
+  text-shadow: 0 2px 5px rgba(0,0,0,0.5);
+  display: block;
+  text-align: center;
+  margin-bottom: 12px;
+  font-weight: 800;
+  justify-content: center;
+  animation: title-pulse 1.5s infinite ease-in-out;
+}
+
+.filter-search {
+  grid-column: 1 / -1; /* 3열 전체 합치기 */
+  text-align: center;
+  font-size: 24px;
+  margin-top: 5px;
+}
+
+
+/* 탭 공통 */
+.tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.tabs.fixed {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, auto);
+  gap: 6px;
+  width: 200px;
+  justify-content: center;
+  margin: 0 auto;
+}
+
+.tabs.difficulty {
+  display: flex;
+  flex-wrap: wrap;       /* ⭐ 자동 줄바꿈 */
+  gap: 6px;
+  justify-content: center;
+}
+
+.tabs a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 3px solid rgba(255,255,255,0.25);
+  white-space: nowrap;
+  text-decoration: none;   
+  flex: 0 0 auto;   /* ⭐ 늘어나지 않게 */
+}
+
+.tabs.difficulty a {
+  min-width: 80px;     
+  text-align: center;
+}
+
+.tabs a,
+.tabs a:visited,
+.tabs a:hover,
+.tabs a:active {
+  text-decoration: none;
+  color: inherit;
+}
+
+
+
+/* =========================
+   RANGE / LEVEL / SIZE
+========================= */
+.range-tabs .range-tab,
+.level-tabs .level-tab,
+.size-tabs .size-tab {
+    border: 2px solid transparent;
+    background: #1e293b;
+    color: #cbd5f5;
+    font-weight: 600;
+}
+
+.range-tabs .range-tab.active,
+.level-tabs .level-tab.active,
+.size-tabs .size-tab.active {
+    box-shadow: 0 0 18px rgba(255,255,255,0.35);
+    transform: scale(1.05);
+}
+
+.range-tabs .range-today { border-color: #feccbe; }
+.range-tabs .range-today.active { background: #feccbe; color: #3b2f00; }
+
+.range-tabs .range-week { border-color: #b8e5e0; }
+.range-tabs .range-week.active { background: #b8e5e0; color: #022c22; }
+
+.range-tabs .range-month { border-color: #ccd2f0; }
+.range-tabs .range-month.active { background: #ccd2f0; color: #2b1b14; }
+
+.range-tabs .range-all { border-color: #22c55e; }
+.range-tabs .range-all.active { background: #22c55e; color: #022c22; }
+
+
+.level-tabs .level-all { border-color: #22c55e; }
+.level-tabs .level-all.active { background:#22c55e; color: #022c22; }
+
+.level-tabs .level-Basic { border-color: #fd8a69; }
+.level-tabs .level-Basic.active { background:#fd8a69; color:#2b1b14; }
+
+.level-tabs .level-Easy { border-color:#fd9f28; }
+.level-tabs .level-Easy.active { background:#fd9f28; color:#2b1b14; }
+
+.level-tabs .level-Normal { border-color:#2fa599; }
+.level-tabs .level-Normal.active { background:#2fa599; color:#022c22; }
+
+.level-tabs .level-Hard { border-color:#2e3d86; }
+.level-tabs .level-Hard.active { background:#2e3d86; color:#fff; }
+
+.level-tabs .level-Challenger { border-color:#541d7a; }
+.level-tabs .level-Challenger.active { background:#541d7a; color:#fff; }
+
+.level-tabs .level-Kids { border-color:#ffcd4a; }
+.level-tabs .level-Kids.active { background:#ffcd4a; color:#3b2f00; }
+
+.level-tabs .level-Summer { border-color:#18a8f1; }
+.level-tabs .level-Summer.active { background:#18a8f1; color:#022c22; }
+
+.level-tabs .level-Space { border-color:#5d6dbe; }
+.level-tabs .level-Space.active { background:#5d6dbe; color:#fff; }
+
+.level-tabs .level-Santa { border-color:#ff1803; }
+.level-tabs .level-Santa.active { background:#ff1803; color:#fff; }
+
+
+.size-tabs .size-all { border-color: #22c55e; }
+.size-tabs .size-all.active { background:#22c55e; color: #022c22; }
+
+.size-tabs .size-소형 { border-color:#feefc5; }
+.size-tabs .size-소형.active { background:#feefc5; color:#3b3b3b; }
+
+.size-tabs .size-중형 { border-color:#daf1bf; }
+.size-tabs .size-중형.active { background:#daf1bf; color:#1f2933; }
+
+.size-tabs .size-대형 { border-color:#b8e9ff; }
+.size-tabs .size-대형.active { background:#b8e9ff; color:#022c22; }
+
+
+
+/* =========================
+   🔍 TEAM SEARCH
+========================= */
+.team-search {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+.team-search input {
+    width: 260px;
+    padding: 5px 20px;
+    border-radius: 20px;
+    border: none;
+    font-size: 14px;
+    outline: none;
+}
+.team-search button {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: none;
+    background: #ffcc00;
+    color: #222;
+    font-weight: 700;
+    cursor: pointer;
+}
+.team-search-info {
+    text-align: center;
+    margin-top: 10px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffcc00;
+}
+/* 🔍 팀명 검색 결과 테이블 (TV 가독성) */
+.team-search-table td {
+    font-size: 22px;      /* TV 기준 안정적인 크기 */
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+/* 점수도 동일 크기로 강제 */
+.team-search-table td.score {
+    font-size: 22px;
+    font-weight: 600;
+}
+
+/* 날짜는 살짝만 작게 */
+.team-search-table td.time {
+    font-size: 18px;
+    font-weight: 500;
+    opacity: 0.9;
+}
+
+
+/* =========================
+   CARD / TABLE
+========================= */
+.card {
+    background: #020617;
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    padding: 14px 8px;
+    color: #22c55e;
+    font-size: 18px;
+}
+
+table th:nth-child(1),
+table th:nth-child(4),
+table th:nth-child(5),
+table th:nth-child(6) {
+    text-align: center;
+}
+
+td {
+    padding: 14px 8px;
+    border-bottom: 1px solid #1e293b;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+tr:nth-child(1) .rank { color: #facc15; font-size: 28px; }
+tr:nth-child(2) .rank { color: #e5e7eb; font-size: 26px; }
+tr:nth-child(3) .rank { color: #f97316; font-size: 24px; }
+
+
+.rank {
+    font-weight: bold;
+    font-size: 22px;
+    text-align: center;
+}
+
+.score {
+    font-size: 26px;
+    font-weight: bold;
+    text-align: center;
+}
+
+.team {
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+.time {
+    font-size: 16px;
+    color: #94a3b8;
+    text-align: center;
+}
+
+.store-rank {
+    margin-left: 6px;
+    font-size: 0.85em;
+    color: #888;
+}
+
+/* =========================
+   데이터 없음
+========================= */
+.empty {
+    text-align: center;
+    padding: 60px;
+    font-size: 22px;
+    color: #64748b;
+}
+
+/* =========================
+   🏆 RANK
+========================= */
+tr.rank-1 {
+    animation: pop 0.6s ease-out, glow 2s infinite;
+    background: rgba(250, 204, 21, 0.4);
+}
+
+tr.rank-2 {
+    animation: pop 0.6s ease-out;
+    background: rgba(203, 213, 225, 0.3);
+}
+
+tr.rank-3 {
+    animation: pop 0.6s ease-out;
+    background: rgba(249, 115, 22, 0.3);
+}
+
+.rank.medal-1::before { content: "🥇 "; }
+.rank.medal-2::before { content: "🥈 "; }
+.rank.medal-3::before { content: "🥉 "; }
+
+
+
+
+/* =========================
+   ANIMATIONS
+========================= */
+
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+}
+
+@keyframes title-pulse {
+    0%, 100% { transform: scale(1); text-shadow: 0 2px 5px rgba(0,0,0,0.5); color: #fbbf24; }
+    50% { transform: scale(1.1); text-shadow: 0 0 15px rgba(251, 191, 36, 1); color: #fffbeb; }
+}
+
+/* 🏆 랭킹 애니메이션 */
+@keyframes pop {
+    0% { transform: scale(0.8); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes glow {
+    0%, 100% { box-shadow: 0 0 10px rgba(250,204,21,0.6); }
+    50% { box-shadow: 0 0 25px rgba(250,204,21,1); }
+}
+
+
+/* 🌊 Summer 애니메이션 */
+@keyframes glow-summer {
+    0%,100% { box-shadow: 0 0 15px rgba(255, 223, 102, 0.6); }
+    50% { box-shadow: 0 0 35px rgba(255, 223, 102, 1); }
+}
+@keyframes wave-text {
+    0% { transform: rotate(-2deg) scale(1); color: #fffbeb; }
+    50% { transform: rotate(2deg) scale(1.05); color: #fef3c7; }
+    100% { transform: rotate(-2deg) scale(1); color: #fffbeb; }
+}
+@keyframes wave-move {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+@keyframes wave1 {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+@keyframes wave2 {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+@keyframes wave3 {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+
+/* 🌌 SPACE 애니메이션 */
+@keyframes starTwinkle {
+    from { opacity: 0.25; }
+    to   { opacity: 0.65; }
+}
+@keyframes starTwinkleSlow {
+    from { opacity: 0.15; }
+    to   { opacity: 0.45; }
+}
+/* 🚀 로켓 이동 */
+@keyframes rocketFly {
+    from {
+        transform: translate(0, 0);
+        opacity: 0;
+    }
+    10% { opacity: 1; }
+    to {
+        transform: translate(var(--dx), var(--dy));
+        opacity: 0;
+    }
+}
+@keyframes milkywayMove {
+    from { transform: rotate(-25deg) translateX(-5%); }
+    to   { transform: rotate(-25deg) translateX(5%); }
+}
+@keyframes planetFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+}
+
+
+/* 🎄 SANTA 애니메이션 */
+@keyframes santa-glow {
+    0% { text-shadow: 0 0 10px rgba(255,255,255,0.4); transform: scale(1); }
+    50% { text-shadow: 0 0 20px rgba(255,255,255,0.8); transform: scale(1.05); }
+    100% { text-shadow: 0 0 10px rgba(255,255,255,0.4); transform: scale(1); }
+}
+/* 수직 낙하 */
+@keyframes fall {
+    to {
+        transform: translateY(110vh);
+    }
+}
+/* 좌우 흔들림 */
+@keyframes sway {
+    0% { margin-left: 0px; }
+    50% { margin-left: 30px; }
+    100% { margin-left: 0px; }
+}
+
+
+/* =========================
+   THEMES
+========================= */
+/* =========================
+   🎨 Kids 테마
+========================= */
+body.kids h1 {
+    color: #ff6347;
+    text-shadow: 2px 2px 5px #fff3;
+}
+body.kids .card {
+    background: rgba(255, 255, 255, 0.85);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+body.kids table {
+    width: 100%;
+    border-collapse: collapse;
+}
+body.kids th {
+    padding: 12px;
+    background: #ffe4b5;
+    color: #ff4500;
+}
+body.kids td {
+    padding: 12px;
+    color: #1a1a1a;
+    border-bottom: 1px solid #ffd700;
+}
+body.kids tr.rank-1 { background: #fff0e0; }
+body.kids tr.rank-2 { background: #fff8dc; }
+body.kids tr.rank-3 { background: #fffacd; }
+
+body.kids .rank.medal-1::before { content: "🥇 "; }
+body.kids .rank.medal-2::before { content: "🥈 "; }
+body.kids .rank.medal-3::before { content: "🥉 "; }
+
+body.kids .empty {
+    text-align: center;
+    padding: 40px;
+    color: #888;
+}
+
+.kids-bubble {
+    position: fixed; /* absolute -> fixed로 바꿔 전체 페이지 기준 */
+    font-size: 24px;
+    opacity: 0.8;
+    pointer-events: none;
+    top: -50px; /* 화면 상단 밖에서 시작 */
+    left: 0;    /* 랜덤으로 JS에서 지정 */
+    z-index: 1000;
+    user-select: none;
+}
+
+
+/* =========================
+   🌊 SUMMER 테마
+========================= */
+body.summer {
+    background: linear-gradient(to top, #00cfff 0%, #87ceeb 70%, #a0e9ff 100%);
+    position: relative;
+}
+body.summer h1 {
+    color: #fffacd; /* 햇살 느낌 */
+    text-align: center;
+    margin-bottom: 20px;
+    letter-spacing: 2px;
+    text-shadow: 0 0 12px rgba(0,0,0,0.5);
+    font-size: 3em;
+    animation: wave-text 3s ease-in-out infinite alternate;
+}
+body.summer .card {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+body.summer table th {    color: #fffae3;}
+body.summer table td {    color: #ffffff;}
+body.summer tr.rank-1 {
+    animation: pop 0.6s ease-out, glow-summer 2s infinite;
+    background: rgba(255, 223, 102, 0.3);
+    color: #000;
+}
+body.summer tr.rank-2 {
+    animation: pop 0.6s ease-out;
+    background: rgba(255, 255, 255, 0.2);
+    color: #000;
+}
+body.summer tr.rank-3 {
+    animation: pop 0.6s ease-out;
+    background: rgba(135, 206, 250, 0.25);
+    color: #000;
+}
+body.summer th, body.summer td {    color: #022c22;}
+body.summer .rank.medal-1::before {    content: "🥇 ";}
+body.summer .rank.medal-2::before {    content: "🥈 ";}
+body.summer .rank.medal-3::before {    content: "🥉 ";}
+
+/* 파도 생성 */
+#waves {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 200%;
+    height: 400px; /* 높이 조정 */
+    background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400"><path fill="%23ffffff" fill-opacity="0.25" d="M0,150 C400,300 800,0 1600,150 L1600,400 L0,400 Z"/></svg>') repeat-x;
+    background-size: cover;
+    animation: wave-move 10s linear infinite;
+    pointer-events: none;
+    z-index: -1;
+}
+.wave {
+    position: absolute;
+    bottom: 0;
+    width: 200%;
+    height: 150px;
+    background-repeat: repeat-x;
+    background-size: cover;
+    opacity: 0.5;
+    pointer-events: none;
+}
+.wave1 {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="150"><path fill="%23ffffff33" d="M0 50 C 500 150 1500 -50 2000 50 L2000 150 L0 150 Z"/></svg>');
+    animation: wave1 10s linear infinite;
+    opacity: 0.5;
+    z-index: 1;
+}
+.wave2 {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="150"><path fill="%23ffffff22" d="M0 60 C 400 140 1600 -40 2000 60 L2000 150 L0 150 Z"/></svg>');
+    animation: wave2 15s linear infinite;
+    opacity: 0.4;
+    bottom: 20px;
+    z-index: 2;
+}
+.wave3 {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="150"><path fill="%23ffffff11" d="M0 40 C 600 130 1400 -30 2000 40 L2000 150 L0 150 Z"/></svg>');
+    animation: wave3 20s linear infinite;
+    opacity: 0.3;
+    bottom: 10px;
+    z-index: 3;
+}
+
+
+/* =========================
+   🌌 SPACE 테마
+========================= */
+body.space {
+    background: radial-gradient(circle at bottom, #020617, #000000);
+}
+body.space h1 {
+    color: #e0f2fe;
+    text-shadow: 0 0 20px rgba(56,189,248,0.8);
+    animation: planetFloat 3s ease-in-out infinite;
+}
+body.space .card {
+    background: rgba(2,6,23,0.88);
+    border: 2px solid rgba(56,189,248,0.4);
+    box-shadow: 0 0 40px rgba(56,189,248,0.2);
+}
+
+/* 🌌 SPACE STARFIELD (Tiny Twinkle) */
+/* ✨ 앞쪽 별 (조금 큰 별) */
+body.space::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+        radial-gradient(2px 2px at 10% 20%, #ffffff, transparent),
+        radial-gradient(1.8px 1.8px at 30% 80%, #ffffff, transparent),
+        radial-gradient(2.5px 2.5px at 50% 50%, #ffffff, transparent),
+        radial-gradient(2px 2px at 70% 30%, #ffffff, transparent),
+        radial-gradient(1.6px 1.6px at 90% 70%, #ffffff, transparent);
+    background-size: 220px 220px;
+    opacity: 0.55;
+    animation: starTwinkle 5s infinite alternate;
+    pointer-events: none;
+    z-index: 0;
+}
+/* ✨ 뒤쪽 별 (연하고 많은 별) */
+body.space::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+        radial-gradient(1.5px 1.5px at 15% 60%, #cccccc, transparent),
+        radial-gradient(1.2px 1.2px at 40% 10%, #cccccc, transparent),
+        radial-gradient(1.8px 1.8px at 80% 40%, #cccccc, transparent),
+        radial-gradient(1.3px 1.3px at 65% 85%, #cccccc, transparent);
+    background-size: 320px 320px;
+    opacity: 0.35;
+    animation: starTwinkleSlow 9s infinite alternate;
+    pointer-events: none;
+    z-index: -1;
+}
+/* 🚀 로켓 */
+.rocket {
+    position: fixed;
+    left: -60px;
+    font-size: 42px;
+    pointer-events: none;
+    animation: rocketFly linear forwards;
+    filter: drop-shadow(0 0 10px rgba(255,255,255,0.4));
+}
+/* 🌠 MILKY WAY */
+.milkyway {
+    position: fixed;
+    inset: -20%;
+    background:
+        radial-gradient(ellipse at center,
+            rgba(255,255,255,0.08) 0%,
+            rgba(255,255,255,0.04) 30%,
+            rgba(255,255,255,0.01) 55%,
+            transparent 70%);
+    transform: rotate(-25deg);
+    filter: blur(20px);
+    opacity: 0.35;
+    pointer-events: none;
+    z-index: -2;
+    animation: milkywayMove 40s linear infinite;
+}
+
+
+
+/* =========================
+   🎄 SANTA 테마
+========================= */
+body.santa {
+    background: linear-gradient(180deg, #7f1d1d, #14532d);
+}
+body.santa h1 {
+    color: #fde68a;
+    text-shadow: 0 0 10px rgba(255,255,255,0.4);
+    animation: santa-glow 2s ease-in-out infinite alternate;
+}
+body.santa .card {
+    background: rgba(2, 6, 23, 0.85);
+    border: 2px solid #facc15;
+}
+
+/* ❄ SNOW CONTAINER */
+#snow {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    z-index: 5;
+}
+/* ❄ SNOWFLAKE */
+.snowflake {
+    position: absolute;
+    top: -10px;
+    color: #fff;
+    opacity: 0.8;
+    font-size: 14px;
+    animation-name: fall, sway;
+    animation-timing-function: linear, ease-in-out;
+    animation-iteration-count: infinite;
+}
+
+
+/* =========================
+   TOP Button
+========================= */
+#topBtn {
+    position: fixed;
+    right: 36px;
+    bottom: 36px;
+
+    min-width: 120px;
+    height: 56px;
+    padding: 0 22px;
+
+    border-radius: 28px;
+
+    background: linear-gradient(145deg, #fde047, #f59e0b);
+    color: #1f2933;
+
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+
+    border: none;
+    cursor: pointer;
+
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+
+    z-index: 100000;
+    pointer-events: auto;
+
+    box-shadow:
+        0 6px 18px rgba(0,0,0,0.35),
+        0 0 18px rgba(253, 224, 71, 0.85);
+
+    transition:
+        transform 0.2s ease,
+        box-shadow 0.2s ease,
+        opacity 0.2s ease;
+}
+
+/* Hover (마우스 있는 환경) */
+#topBtn:hover {
+    transform: translateY(-4px) scale(1.05);
+    box-shadow:
+        0 10px 28px rgba(0,0,0,0.45),
+        0 0 28px rgba(253, 224, 71, 1);
+}
+
+/* Click */
+#topBtn:active {
+    transform: scale(0.96);
+}
+
+
+
+
+
+/* =========================
+   📺 VERTICAL TV MODE
+========================= */
+@media (orientation: portrait) { 
+    #topBtn {
+        right: 48px;
+        bottom: 160px;
+        font-size: 22px;
+        min-width: 140px;
+        height: 64px;
+    }
+
+    .container {
+        max-width: 100%;
+        position: relative;
+        z-index: 10;
+    }
+
+    .fixed-header .tabs:last-child {
+        margin-bottom: 0;
+    }
+
+    /* 스크롤바 숨김 (TV) */
+    .tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    h1 {
+        font-size: 42px;
+        margin-bottom: 24px;
+    }
+
+    .filter-wrapper {
+
+    }
+
+    .tabs.fixed {
+        justify-content: center;
+        width: 140px;
+    }
+
+    .tabs.difficulty a {
+        min-width: 40px;
+    }
+
+    .tabs a {
+        font-size: 14px;
+        padding: 4px 6px;
+    }
+  
+    table th {
+        font-size: 14px;
+    }
+
+    table td {
+        font-size: 20px;
+        padding: 8px 14px;
+    }
+
+    .team-search-info {
+        font-size: 24px;
+    }
+
+    .team-search-table td {
+        font-size: 20px;   /* TV 세로는 조금 작게 조정 */
+    }
+
+    .team-search-table td.time {
+        font-size: 16px;
+    }
+
+    .rank {
+        font-size: 22px;
+    }
+
+    .score {
+        font-size: 28px;
+        color: #22c55e;
+    }
+
+    .time {
+        font-size: 14px;
+        color: #94a3b8;
+        text-align: center;
+        white-space: nowrap;
+    }
+}
+
+/* 테이블 데이터 텍스트 색상 (탭 색상 매칭) */
+.text-level-Basic { color: #fd8a69 !important; }
+.text-level-Easy { color: #fd9f28 !important; }
+.text-level-Normal { color: #2fa599 !important; }
+.text-level-Hard { color: #9fa8da !important; }       /* 가독성을 위해 밝게 조정 */
+.text-level-Challenger { color: #ce93d8 !important; } /* 가독성을 위해 밝게 조정 */
+.text-level-Kids { color: #ffcd4a !important; }
+.text-level-Summer { color: #18a8f1 !important; }
+.text-level-Space { color: #90caf9 !important; }      /* 가독성을 위해 밝게 조정 */
+.text-level-Santa { color: #ff5252 !important; }
+
+.text-size-소형 { color: #feefc5 !important; }
+.text-size-중형 { color: #daf1bf !important; }
+.text-size-대형 { color: #b8e9ff !important; }
+
+/* 밝은 배경(Kids, Summer)에서의 텍스트 가독성 확보 (진한 색상 적용) */
+body.kids .text-level-Basic, body.summer .text-level-Basic { color: #c2410c !important; }
+body.kids .text-level-Easy, body.summer .text-level-Easy { color: #b45309 !important; }
+body.kids .text-level-Normal, body.summer .text-level-Normal { color: #0f766e !important; }
+body.kids .text-level-Hard, body.summer .text-level-Hard { color: #4338ca !important; }
+body.kids .text-level-Challenger, body.summer .text-level-Challenger { color: #7e22ce !important; }
+body.kids .text-level-Kids, body.summer .text-level-Kids { color: #a16207 !important; }
+body.kids .text-level-Summer, body.summer .text-level-Summer { color: #0369a1 !important; }
+body.kids .text-level-Space, body.summer .text-level-Space { color: #1d4ed8 !important; }
+body.kids .text-level-Santa, body.summer .text-level-Santa { color: #b91c1c !important; }
+
+body.kids .text-size-소형, body.summer .text-size-소형 { color: #854d0e !important; }
+body.kids .text-size-중형, body.summer .text-size-중형 { color: #3f6212 !important; }
+body.kids .text-size-대형, body.summer .text-size-대형 { color: #1e40af !important; }
+
+/* ✨ 검색 결과 강조 애니메이션 */
+@keyframes highlight-blink {
+    0%, 100% { background-color: transparent; }
+    50% { background-color: rgba(255, 215, 0, 0.4); }
+}
+.highlight-row {
+    animation: highlight-blink 1s ease-in-out 3; /* 3번 깜빡임 */
+    background-color: rgba(255, 215, 0, 0.2);
+}
+/* 검색 결과 테이블 커서 */
+.team-search-table tr {
+    cursor: pointer;
+}
+/* ✨ 안내 문구 깜빡임 효과 */
+@keyframes text-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+</style>
+</head>
+
+
+
+<body class="{% if current_level == 'Santa' %}santa{% elif current_level == 'Summer' %}summer{% elif current_level == 'Kids' %}kids{% elif current_level == 'Space' %}space{% endif %}">
+{% if current_level == 'Summer' %}
+<div id="waves">
+  <div class="wave wave1"></div>
+  <div class="wave wave2"></div>
+  <div class="wave wave3"></div>
+</div>
+{% endif %}
+<div class="container">
+<!-- 🔒 고정 영역 -->
+<div class="fixed-header">
+<h1>
+{% if current_level == 'Santa' %}
+🎄 SANTA RANKING 🎄
+{% elif current_level == 'Summer' %}
+🌊 SUMMER RANKING 🌊
+{% elif current_level == 'Kids' %}
+🎈 KIDS RANKING 🎈
+{% elif current_level == 'Space' %}
+🪐 SPACE RANKING 🪐
+{% else %}
+🏆 수원영통점 RANKING 🏆
+{% endif %}
+</h1>
+
+<div class="filter-wrapper">
+
+  <!-- 기간 -->
+  <div class="filter-col">
+    <div class="filter-title">① 기간 선택</div>
+<div class="tabs fixed range-tabs">
+<a class="range-tab range-all {{ 'active' if current_range=='all' else '' }}"
+   href="?range=all&level={{ current_level }}&size={{ current_size }}">
+   전체
+</a>
+  <a class="range-tab range-today {{ 'active' if current_range=='today' else '' }}"
+   href="?range=today&level={{ current_level }}&size={{ current_size }}">
+   오늘
+</a>
+<a class="range-tab range-week {{ 'active' if current_range=='week' else '' }}"
+   href="?range=week&level={{ current_level }}&size={{ current_size }}">
+   일주일
+</a>
+<a class="range-tab range-month {{ 'active' if current_range=='month' else '' }}"
+   href="?range=month&level={{ current_level }}&size={{ current_size }}">
+   한달
+</a>
+</div>
+</div>
+
+<!-- 난이도 -->
+  <div class="filter-col center">
+    <div class="filter-title">② 난이도 선택</div>
+<div class="tabs difficulty level-tabs">
+{% for l in levels %}
+  <a class="level-tab level-{{ l }} {% if current_level==l %}active{% endif %}"
+   href="?range={{ current_range }}&level={{ l }}&size={{ current_size }}">
+   {{ LEVEL_KR[l] }}
+</a>
+{% endfor %}
+</div>
+</div>
+
+<!-- 사이즈 -->
+  <div class="filter-col">
+    <div class="filter-title">③ 사이즈 선택</div>
+<div class="tabs fixed size-tabs">
+{% for s in sizes %}
+  <a class="size-tab size-{{ s }} {% if current_size==s %}active{% endif %}"
+   href="?range={{ current_range }}&level={{ current_level }}&size={{ s }}">
+   {{ "전체" if s=="all" else s }}
+</a>
+{% endfor %}
+</div>
+</div>
+
+<!-- 🔍 팀명 검색 -->
+<div class="filter-search">
+<div class="team-search">
+    <input id="teamSearchInput" type="text" placeholder="팀명 검색">
+    <button class="team-search-btn" onclick="searchTeam()">검색</button>
+</div>
+<div id="team-search-info" class="team-search-info" style="display:none;">
+    팀명 검색 결과 (<span id="countdown">20</span>초 뒤 랭킹 화면으로 돌아갑니다)
+    <div style="font-size: 1em; color: #f0f9ff; margin-top: 8px; text-shadow: 0 0 3px #000; animation: text-blink 1s infinite ease-in-out;">💡 팀명을 클릭하면 해당 랭킹 위치로 이동합니다. 💡</div>
+</div>
+</div>
+
+</div>
+</div>
+
+
+  <!-- 🔽 스크롤 영역 -->
+  <div class="scroll-area">
+<div class="card">
+{% if rows %}
+<table>
+<tr>
+  <th>Rank</th>
+  <th>Level</th>
+  <th>Size</th>
+  <th>Team</th>
+  <th>Score</th>
+  <th>Date</th>
+</tr>
+
+{% for r in rows %}
+  <tr id="record-{{ r.id }}" class="
+    {% if r.is_outside_rank %}outside-rank{% else %}
+        {% if r.display_rank == 1 %}rank-1{% endif %}
+        {% if r.display_rank == 2 %}rank-2{% endif %}
+        {% if r.display_rank == 3 %}rank-3{% endif %}
+    {% endif %}
+  ">
+  <td class="rank
+{% if not r.is_outside_rank %}
+    {% if r.display_rank|int == 1 %}medal-1{% endif %}
+    {% if r.display_rank|int == 2 %}medal-2{% endif %}
+    {% if r.display_rank|int == 3 %}medal-3{% endif %}
+{% endif %}
+">{{ r.display_rank }}</td>
+  <td class="text-level-{{ r.level }}">{{ LEVEL_KR[r.level] }}</td>
+  <td class="text-size-{{ r.size }}">{{ r.size }}</td>
+  <td class="team">{{ r.team }}</td>
+  <td class="score">{{ r.score }}</td>
+  <td class="time">{{ r.time[2:10] }}</td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<div class="empty">데이터가 없습니다</div>
+{% endif %}
+</div>
+</div>
+</div>
+<div id="snow"></div>
+{% if current_level == 'Space' %}
+<div id="space"></div>
+<div class="milkyway"></div>
+
+
+
+<!-- ✅ 로켓 시작 Y 랜덤화 (추가) -->
+<script>
+if (document.body.classList.contains("space")) {
+    const space = document.getElementById("space");
+
+    function createRocket() {
+        const rocket = document.createElement("div");
+        rocket.className = "rocket";
+        rocket.textContent = "🚀";
+
+        const size = Math.random() * 30 + 30;
+        rocket.style.fontSize = size + "px";
+
+        const duration = Math.random() * 6 + 6;
+        rocket.style.animationDuration = duration + "s";
+
+        // 🚀 시작 방식 랜덤
+        const startMode = Math.random() < 0.5 ? "left" : "bottom";
+
+        if (startMode === "left") {
+            // ⬅ 왼쪽에서 시작
+            rocket.style.left = "-60px";
+            rocket.style.top = Math.random() * window.innerHeight * 0.7 + "px";
+
+            rocket.style.setProperty("--dx", "130vw");
+            rocket.style.setProperty("--dy", "-130vh");
+        } else {
+            // ⬇ 바닥에서 시작
+            rocket.style.left = Math.random() * window.innerWidth * 0.7 + "px";
+            rocket.style.top = window.innerHeight + 60 + "px";
+
+            rocket.style.setProperty("--dx", "130vw");
+            rocket.style.setProperty("--dy", "-160vh");
+        }
+
+        space.appendChild(rocket);
+        setTimeout(() => rocket.remove(), duration * 1000);
+    }
+
+    setInterval(createRocket, 1200);
+}
+</script>
+{% endif %}
+<script>
+if (document.body.classList.contains("santa")) {
+    const snow = document.getElementById("snow");
+    const SNOW_COUNT = 60; // 눈 개수 (TV면 40~60 적당)
+
+    for (let i = 0; i < SNOW_COUNT; i++) {
+        const flake = document.createElement("div");
+        flake.className = "snowflake";
+        flake.textContent = "❄";
+
+        const size = Math.random() * 10 + 10;
+        const left = Math.random() * 100;
+        const duration = Math.random() * 10 + 10;
+        const delay = Math.random() * -20;
+
+        flake.style.fontSize = size + "px";
+        flake.style.left = left + "vw";
+        flake.style.animationDuration = `${duration}s, ${duration / 2}s`;
+        flake.style.animationDelay = `${delay}s`;
+
+        snow.appendChild(flake);
+    }
+}
+
+if (document.body.classList.contains("kids")) {
+// 🌈 Kids 전체 페이지 애니메이션
+const bubbleEmojis = ['🎈','☁️','🎀','🦄','🌈'];
+const bubbleCount = 30; // 더 많이 생성 가능
+
+for(let i=0;i<bubbleCount;i++){
+    const bubble = document.createElement('div');
+    bubble.classList.add('kids-bubble');
+    bubble.innerText = bubbleEmojis[Math.floor(Math.random()*bubbleEmojis.length)];
+    bubble.style.left = Math.random()*100 + 'vw';       // 전체 폭 기준
+    bubble.style.fontSize = (14 + Math.random()*15) + 'px';
+    bubble.style.opacity = 0.5 + Math.random()*0.5;
+    bubble.dataset.speed = 0.5 + Math.random()*1.0;
+    bubble.dataset.amplitude = 10 + Math.random()*50;
+    bubble.dataset.angle = Math.random()*Math.PI*2;
+    bubble.dataset.startY = -50 - Math.random()*100;   // 시작 Y 위치
+    document.body.appendChild(bubble);
+}
+
+const bubbles = document.querySelectorAll('.kids-bubble');
+
+function animateBubbles(){
+    const t = Date.now()/1000;
+    bubbles.forEach(b => {
+        const speed = parseFloat(b.dataset.speed);
+        const amplitude = parseFloat(b.dataset.amplitude);
+        const angle = parseFloat(b.dataset.angle);
+        let y = b.dataset.startY*1 + (t * 30 * speed);  // 위 -> 아래
+        y = y % (window.innerHeight + 100) - 50;         // 화면 아래로 나가면 다시 위로
+        const x = Math.cos(t*speed + angle) * amplitude + parseFloat(b.style.left);
+        b.style.transform = `translate(${x}px, ${y}px)`;
+    });
+    requestAnimationFrame(animateBubbles);
+}
+animateBubbles();
+}
+</script>
+
+<button id="topBtn" title="맨 위로">⬆맨위로</button>
+<script>
+function refreshRanking() {
+    const scrollArea = document.querySelector(".scroll-area");
+    const container = document.querySelector(".container");
+    const card = document.querySelector(".card");
+    const oldTable = card ? card.querySelector("table") : null;
+
+    if (!scrollArea || !container || !card || !oldTable) return;
+
+    const currentScrollTop = scrollArea.scrollTop;
+
+    fetch(window.location.href, { cache: "no-store" })
+        .then(res => res.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
+            const newTable = doc.querySelector(".card table");
+            if (!newTable) return;
+
+            // 1️⃣ table 교체
+            oldTable.replaceWith(newTable);
+
+            // 2️⃣ scroll-area 강제 재생성 트릭
+            const placeholder = document.createComment("scroll-area-placeholder");
+            container.replaceChild(placeholder, scrollArea);
+
+            requestAnimationFrame(() => {
+                container.replaceChild(scrollArea, placeholder);
+
+                // 3️⃣ 스크롤 위치 복원
+                requestAnimationFrame(() => {
+                    scrollArea.scrollTop = currentScrollTop;
+                });
+            });
+        })
+        .catch(err => console.error("refreshRanking error:", err));
+}
+</script>
+
+<script>
+let backTimer = null;
+let countdownTimer = null;
+
+function formatDateYYMMDDHHMM(timeStr) {
+    // "2026-02-10 16:45" → "26-02-10 16:45"
+    if (!timeStr) return "";
+    return timeStr.slice(2, 16);
+}
+/* 1️⃣ 테이블 생성 */
+function renderTeamSearchTable(rows) {
+    const table = document.createElement("table");
+
+    table.classList.add("team-search-table");
+    
+    table.innerHTML = `
+<colgroup>
+    <col style="width:22%">
+    <col style="width:28%">
+    <col style="width:16%">
+    <col style="width:14%">
+    <col style="width:20%">
+</colgroup>
+<thead>
+    <tr>
+        <th>Date (최신순)</th>
+        <th>Team</th>
+        <th>Level</th>
+        <th>Size</th>
+        <th>Score</th>
+    </tr>
+</thead>
+<tbody>
+            ${rows.map(r => `
+                <tr onclick="location.href='/?range=all&level=${r.raw_level}&size=all&highlight=${r.id}'" title="클릭하면 랭킹 화면에서 위치를 찾습니다">
+                    <td class="time">${formatDateYYMMDDHHMM(r.time)}</td>
+                    <td class="team">${r.team}</td>
+                    <td class="text-level-${r.raw_level}">${r.level}</td>
+                    <td class="text-size-${r.size}">${r.size}</td>
+                    <td class="score">${r.score}</td>
+                </tr>
+            `).join("")}
+        </tbody>
+    `;
+    return table;
+}
+/* 2️⃣ 검색 실행 */
+async function searchTeam() {
+    const input = document.getElementById("teamSearchInput");
+    if (!input) return;
+
+    const keyword = input.value.trim();
+    if (!keyword) return;
+
+    const res = await fetch(`/team_search?keyword=${encodeURIComponent(keyword)}`);
+    const rows = await res.json();
+
+    const card = document.querySelector(".card");
+    if (!card) return;
+
+    card.innerHTML = "";
+
+    if (rows.length === 0) {
+        card.innerHTML = `<div class="empty">검색 결과가 없습니다</div>`;
+        return;
+    }
+
+    card.appendChild(renderTeamSearchTable(rows));
+
+    /* 🔔 fixed-header 안내 표시 */
+    const info = document.getElementById("team-search-info");
+    const countdownEl = document.getElementById("countdown");
+
+    if (info && countdownEl) {
+        info.style.display = "block";
+
+        let remain = 20;
+        countdownEl.innerText = remain;
+
+        if (countdownTimer) clearInterval(countdownTimer);
+        if (backTimer) clearTimeout(backTimer);
+
+        countdownTimer = setInterval(() => {
+            remain--;
+            countdownEl.innerText = remain;
+            if (remain <= 0) {
+                clearInterval(countdownTimer);
+            }
+        }, 1000);
+
+        backTimer = setTimeout(() => {
+            location.href = "/";
+        }, 20000);
+    }
+}
+</script>
+<script>
+window.addEventListener("load", () => {
+    const info = document.getElementById("team-search-info");
+    if (info) info.style.display = "none";
+    
+    // 엔터키 검색 지원
+    const input = document.getElementById("teamSearchInput");
+    if(input) {
+        input.addEventListener("keypress", (e) => { if(e.key === "Enter") searchTeam(); });
+    }
+    
+    // 🔍 하이라이트 기능 (검색 후 이동했을 때)
+    const params = new URLSearchParams(window.location.search);
+    const highlightId = params.get("highlight");
+    
+    if (highlightId) {
+        const targetRow = document.getElementById("record-" + highlightId);
+        if (targetRow) {
+            // 약간의 지연 후 스크롤 (화면 렌더링 확보)
+            setTimeout(() => {
+                targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+                targetRow.classList.add("highlight-row");
+            }, 300);
+        }
+    }
+});
+</script>
+<script>
+(function () {
+    const topBtn = document.getElementById("topBtn");
+    const scrollArea = document.querySelector(".scroll-area");
+    if (!topBtn || !scrollArea) return;
+
+    function checkScroll() {
+        if (scrollArea.scrollTop > 80) {
+            topBtn.style.display = "block";
+        } else {
+            topBtn.style.display = "none";
+        }
+    }
+
+    scrollArea.addEventListener("scroll", checkScroll);
+
+    topBtn.onclick = function () {
+        scrollArea.scrollTo({
+            top: 0,
+            behavior: "smooth"
+        });
+    };
+
+    topBtn.style.display = "none";
+
+})();
+</script>
+
+<!-- 화면 확대금지 -->
+<script>
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('gesturechange', e => e.preventDefault());
+document.addEventListener('gestureend', e => e.preventDefault());
+
+let lastTouchEnd = 0;
+document.addEventListener('touchend', e => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) {
+        e.preventDefault();
+    }
+    lastTouchEnd = now;
+});
+</script>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const socket = io();
+
+socket.on("connect", () => {
+    console.log("✅ Socket connected");
+  });
+
+socket.on("rank_refresh", () => {
+    console.log("🔄 rank_refresh 수신 → 페이지 리로드");
+    location.reload();
+});
+</script>
+
+<script>console.log("rank.html loaded");</script>
+
+<!-- ⏳ 5분 미조작 시 기본 화면(최근10, 전체, 전체)으로 리셋 -->
+<script>
+(function(){
+    const TIMEOUT = 5 * 60 * 1000; // 5분
+    let timer = null;
+
+    function goDefault() {
+        // 기본 화면으로 이동 (오늘, 난이도 전체, 사이즈 전체)
+        window.location.href = "/?range=today&level=all&size=all";
+    }
+
+    function resetTimer() {
+        if(timer) clearTimeout(timer);
+        timer = setTimeout(goDefault, TIMEOUT);
+    }
+
+    // 사용자 활동 감지 이벤트 등록
+    const events = ['mousemove', 'mousedown', 'click', 'keydown', 'touchstart', 'touchmove'];
+    events.forEach(evt => window.addEventListener(evt, resetTimer));
+    window.addEventListener('scroll', resetTimer, true); // 스크롤은 캡처링 사용
+
+    resetTimer(); // 초기 타이머 시작
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <title>점핑배틀 수원영통점 워크인</title>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/walkin.css') }}">
+</head>
+<body>
+    <div class="walkin-form">
+        <button id="fullscreen-btn" onclick="startKioskMode()" style="padding: 15px 30px; font-size: 1.2rem; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 8px;">
+            전체 화면
+        </button>
+        <div class="language-selector">
+            <div class="selected-lang">
+                <span class="flag-icon">🇰🇷</span>
+                <span class="lang-text">KO</span>
+            </div>
+            <ul class="lang-list">
+                <li onclick="changeLanguage('ko')"><span class="flag-icon">🇰🇷</span> 한국어</li>
+                <li onclick="changeLanguage('en')"><span class="flag-icon">🇺🇸</span> English</li>
+                <li onclick="changeLanguage('zh')"><span class="flag-icon">🇨🇳</span> 中文</li>
+                <li onclick="changeLanguage('ja')"><span class="flag-icon">🇯🇵</span> 日本語</li>
+            </ul>
+        </div>
+
+        <div class="walkin-tabs">
+            <button type="button" class="tab-btn active" data-target="tab-info"><span class="tab-num">1</span> 팀명 | 인원수 | 방사이즈 선택</button>
+            <button type="button" class="tab-btn" data-target="tab-level"><span class="tab-num">2</span> 난이도 선택</button>
+            <button type="button" class="tab-btn" data-target="tab-contact"><span class="tab-num">3</span> 방문자 정보 | 신청하기</button>
+        </div>
+
+        <div class="tab-content">
+            <section class="tab-panel active" id="tab-info">
+                <div class="form-row-two-columns">
+                    <div class="form-section">
+                        <div class="title-area">
+                            <div class="section-title">Step 1. 팀명 입력<span class="subtitle-hint">공백 포함 최대 10자</span></div>
+                        </div>
+                        <input type="text" id="team" placeholder="팀명 (공백 포함 최대 10자)" maxlength="10">
+                    </div>
+
+                    <div class="form-section">
+                        <div class="title-area">
+                            <div class="section-title">Step 2. 인원 입력<span class="subtitle-hint">연나이 5세~19세 청소년 요금이 적용됩니다.</span></div>
+                        </div>
+                        <div class="compact-counter-group">
+                            <div class="slim-counter">
+                                <span class="slim-label">성인</span>
+                                <div class="slim-controls">
+                                    <button type="button" class="rect-btn minus" onclick="updateCount('adult_count', -1)">-</button>
+                                    <input type="number" id="adult_count" value="0" readonly>
+                                    <button type="button" class="rect-btn plus" onclick="updateCount('adult_count', 1)">+</button>
+                                </div>
+                            </div>
+                            <div class="slim-counter">
+                                <span class="slim-label">청소년</span>
+                                <div class="slim-controls">
+                                    <button type="button" class="rect-btn minus" onclick="updateCount('child_count', -1)">-</button>
+                                    <input type="number" id="child_count" value="0" readonly>
+                                    <button type="button" class="rect-btn plus" onclick="updateCount('child_count', 1)">+</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="title-area">
+                        <div class="section-title">Step 3. 방 사이즈 선택 <span class="subtitle-hint">방 사이즈에 따른 추가요금은 없습니다.</span></div>  
+                    </div>
+                    <div class="room-size-group">
+                        <label class="size-item">
+                            <input type="radio" name="room_size" value="소형" checked>
+                            <div class="size-box"><span class="size-name">소형</span><span class="size-info">2~4인 추천</span></div>
+                        </label>
+                        <label class="size-item">
+                            <input type="radio" name="room_size" value="중형">
+                            <div class="size-box"><span class="size-name">중형</span><span class="size-info">3~6인 추천</span><span class="size-info2">(대형방에서 발판이 2/3만 켜집니다!)</span></div>
+                        </label>
+                        <label class="size-item">
+                            <input type="radio" name="room_size" value="대형">
+                            <div class="size-box"><span class="size-name">대형</span><span class="size-info">5인 이상 추천</span></div>
+                        </label>
+                    </div>
+                    <label class="fast-room-slim" for="room_fast">
+                        <input type="checkbox" id="room_fast">
+                        <span class="custom-check-box"></span>
+                        <span class="fast-text-inline">⚡ 방 사이즈 상관없이 가장 빠른 방 입장</span>
+                    </label>
+                    <div class="step-nav-right">
+                        <button type="button" class="arrow-btn next" onclick="switchTab('tab-level')">
+                            <span class="btn-text">다음 단계</span>
+                            <div class="icon-circle">
+                                <i class="arrow-right"></i>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tab-panel" id="tab-level">
+                <div class="form-section no-border">
+                    <div class="title-area">
+                        <div class="section-title">Step 4. 난이도 선택<span class="subtitle-hint">별갯수 참고하시면 됩니다!</span><span class="subtitle-hint2">게임시작 후 중간에 난이도는 변경할 수 없습니다.</span></div>
+                    </div>
+
+                    <div class="level-guide-container">
+                        <div class="guide-range">
+                            <span style="color: #3b82f6;">🌿 쉬움</span>
+                            <div class="guide-line"></div>
+                            <span style="color: #ef4444;">🔥 어려움</span>
+                        </div>
+                        <div class="guide-order">
+                            <span style="color: var(--kids-color);">유아</span> → 
+                            <span style="color: var(--basic-color);">베이직</span> → 
+                            <span style="color: var(--summer-color);">여름</span> → 
+                            <span style="color: var(--easy-color);">이지</span> → 
+                            <span style="color: var(--space-color);">우주</span> → 
+                            <span style="color: var(--normal-color);">노멀</span> → 
+                            <span style="color: var(--santa-color);">산타</span> → 
+                            <span style="color: var(--hard-color);">하드</span> → 
+                            <span style="color: var(--challenger-color);">챌린저</span>
+                        </div>
+                    </div>
+                    
+                    <div class="level-radio-group">
+                        <div class="level-section-label">정규맵<span class="subtitle-hint">정규맵과 테마맵 중 하나만 선택가능합니다.</span></div>
+                        <div class="level-star-container regular-grid">
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㅂ" checked>
+                                <div class="star-visual">
+                                    <span class="level-name" style="color: var(--basic-color);">베이직</span>
+                                    <div class="star-score-row"><span class="star-img one"></span><span class="score-num">(1) <small class="intro-tag">처음하시는 분</small></span></div>
+                                </div>
+                            </label>
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㅇ">
+                                <div class="star-visual">
+                                    <span class="level-name" style="color: var(--easy-color);">이지</span>
+                                    <div class="star-score-row"><span class="star-img two"></span><span class="score-num">(2) <small class="intro-tag">처음하시는 분</small></span></div>
+                                </div>
+                            </label>
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㄴ">
+                                <div class="star-visual">
+                                    <span class="level-name" style="color: var(--normal-color);">노멀</span>
+                                    <div class="star-score-row"><span class="star-img three"></span><span class="score-num">(3) <small class="intro-tag">경험자</small></span></div>
+                                </div>
+                            </label>
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㅎ">
+                                <div class="star-visual">
+                                    <span class="level-name" style="color: var(--hard-color);">하드</span>
+                                    <div class="star-score-row"><span class="star-img four"></span><span class="score-num">(4) <small class="intro-tag">노멀 클리어 후</small></span></div>
+                                </div>
+                            </label>
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㅊ">
+                                <div class="star-visual">
+                                    <span class="level-name" style="color: var(--challenger-color);">챌린저</span>
+                                    <div class="star-score-row"><span class="star-img five"></span><span class="score-num">(5) <small class="intro-tag">하드 클리어 후</small></span></div>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="level-section-label theme-label">테마맵<span class="subtitle-hint">테마맵은 난이도가 섞여있습니다. 평균적인 난이도로 안내합니다.</span></div>
+                        <div class="level-star-container theme-grid">
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㅋ">
+                                <div class="star-visual theme-box">
+                                    <span class="level-name" style="color: var(--kids-color);">유아맵</span>
+                                    <div class="star-score-row"><span class="star-img half"></span><span class="score-num">(0.5) <small class="intro-tag">미취학아동</small></span></div>
+                                </div>
+                            </label>
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㄹ">
+                                <div class="star-visual theme-box">
+                                    <span class="level-name" style="color: var(--summer-color);">여름맵</span>
+                                    <div class="star-score-row"><span class="star-img one-half"></span><span class="score-num">(1.5) <small class="intro-tag">처음하시는 분</small></span></div>
+                                </div>
+                            </label>
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㅈ">
+                                <div class="star-visual theme-box">
+                                    <span class="level-name" style="color: var(--space-color);">우주맵</span>
+                                    <div class="star-score-row"><span class="star-img two-half"></span><span class="score-num">(2.5)</span></div>
+                                </div>
+                            </label>
+                            <label class="level-star-item">
+                                <input type="radio" name="level" value="ㅅ">
+                                <div class="star-visual theme-box">
+                                    <span class="level-name" style="color: var(--santa-color);">산타맵</span>
+                                    <div class="star-score-row"><span class="star-img three-half"></span><span class="score-num">(3.5)</span></div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="step-nav-container">
+                    <button type="button" class="arrow-btn prev" onclick="switchTab('tab-info')">                        
+                        <div class="icon-circle">
+                            <i class="arrow-left"></i>
+                        </div>
+                        <span class="btn-text">이전 단계</span>
+                    </button>
+                    
+                    <button type="button" class="arrow-btn next" onclick="switchTab('tab-contact')">
+                        <span class="btn-text">다음 단계</span>
+                        <div class="icon-circle">
+                            <i class="arrow-right"></i>
+                        </div>
+                    </button>
+                </div>
+            </section>
+
+            <section class="tab-panel" id="tab-contact">
+                <div class="form-section">
+                    <div class="title-area">
+                        <div class="section-title">Step 5. 방문자 정보 <span class="subtitle-hint" id="name-hint">한분만 입력해주시면 됩니다.</span></div>
+                    </div>
+                    <div class="input-row">
+                        <input type="text" id="name" placeholder="성함" class="name-input">
+                        <input type="tel" id="phone" placeholder="전화번호(숫자만 입력)" class="phone-input" inputmode="numeric" pattern="[0-9]*" oninput="this.value = this.value.replace(/[^0-9]/g, '');">
+                    </div>
+                    <div class="warning-box">
+                        <div class="warning-title">⚠️ 안전 이용 수칙 (필독)</div>
+                        <p>• 소아·청소년 광과민성 발작 주의 (관련 증상 시 체험 금지)</p>
+                        <p>• 과격한 플레이 금지! 본인 부주의로 인한 부상은 책임지지 않습니다.</p>
+                        <p>• 쓸림 주의: 바닥 단차로 인해 기어 다니거나 슬라이딩 시 맨살이 쓸릴 수 있습니다. 발로만! 밟아주세요~</p>
+                        <P>• 점핑배틀은 전 연령이 이용하는 매장입니다. 어린이전용 이용시설이 아니므로 보호자의 주의의무가 있습니다. </P>
+                        <p>★ <b>어린이는 보호자의 각별한 주의 부탁드립니다!</b></p>
+                    </div>            
+                    <label class="agree-section" for="is_agreed">
+                        <input type="checkbox" id="is_agreed">
+                        <span class="agree-check-box"></span>
+                        <span class="agree-text">안전 수칙 확인 및 개인정보 수집 동의 (필수)</span>
+                    </label>
+                </div>        
+                <div class="final-nav-container">
+                    <!-- 이전 단계 버튼 -->
+                    <button type="button" class="arrow-btn prev" onclick="switchTab('tab-level')">
+                        <div class="icon-circle">
+                            <i class="arrow-left"></i>
+                        </div>
+                        <span class="btn-text">이전 단계</span>
+                    </button>
+                    
+                    <!-- 신청하기 버튼 (두 번째 탭 디자인 스타일 이식) -->
+                    <button type="button" onclick="sendWalkInData()" class="submit-btn-capsule">
+                        <span class="submit-text">신 청 하 기</span>
+                    </button>
+                </div>
+            </section>
+        </div>
+    </div>
+    <div id="custom-alert" class="modal-overlay">
+    <div class="modal-content">
+        <div id="modal-message">신청이 완료되었습니다!</div>
+            <button type="button" onclick="closeModal()" class="modal-btn">확인</button>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/walkin.js') }}"></script>
+</body>
+</html>
