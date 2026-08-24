@@ -1,0 +1,32 @@
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+config/google_key.json
+config/credentials.json
+*.pem
+*.p12
+
+# Operating data and backups
+*.db
+*.db_*
+*.sqlite
+*.sqlite3
+database_backup/
+logs/
+*.log
+log_offset.dat
+data.xlsx
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
