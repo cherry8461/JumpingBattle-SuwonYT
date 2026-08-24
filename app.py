@@ -40,6 +40,8 @@ SERVER_LOG_DIR = os.path.abspath(
     )
 )
 LOG_DIR = os.path.abspath(os.getenv("GAME_MONITOR_LOG_DIR", os.path.join(PROJECT_ROOT, "logs")))
+SERVER_HOST = os.getenv("GAME_MONITOR_HOST", "127.0.0.1")
+SERVER_PORT = int(os.getenv("GAME_MONITOR_PORT", "8081"))
 
 web = Flask(__name__)
 web.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "development-only-change-me")
@@ -3191,8 +3193,8 @@ if __name__ == "__main__":
 
     socketio.run(
         web, 
-        host="0.0.0.0", 
-        port=8080, 
+        host=SERVER_HOST,
+        port=SERVER_PORT,
         debug=dev_reload,
         use_reloader=dev_reload
     )
