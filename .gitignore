@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+chrome_extension/local-config.js
 config/google_key.json
 config/credentials.json
 *.pem
