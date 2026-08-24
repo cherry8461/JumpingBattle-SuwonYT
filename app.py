@@ -772,7 +772,11 @@ def init_db():
     cur.execute('CREATE INDEX IF NOT EXISTS idx_game_records_time_pad ON game_records(time, pad_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_bookings_date_room_time ON bookings(booking_date, room, time_key)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_queue_items_room_order ON queue_items(room, order_no)')
-    cur.execute('CREATE INDEX IF NOT EXISTS idx_walkins_time_status ON walkins(reg_time, status)')
+    # Old operating databases use visit_date; newer empty databases use reg_time.
+    if 'visit_date' in walkin_columns:
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_walkins_date_status ON walkins(visit_date, status)')
+    elif 'reg_time' in walkin_columns:
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_walkins_time_status ON walkins(reg_time, status)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_mail_cache_today ON naver_mail_cache(use_date, status, use_time_key)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_supply_history_date ON supply_history(target_date)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_room_agents_room_status ON room_agents(room_id, status)')
