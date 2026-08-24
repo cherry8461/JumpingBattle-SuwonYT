@@ -1,0 +1,7 @@
+Flask
+Flask-SocketIO
+gspread
+gspread-formatting
+oauth2client
+openpyxl
+python-dotenv
