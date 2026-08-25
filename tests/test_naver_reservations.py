@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 
@@ -11,6 +12,8 @@ TEST_ROOT = Path(tempfile.mkdtemp(prefix="jumpingbattle-naver-test-"))
 os.environ["GAME_MONITOR_DB_PATH"] = str(TEST_ROOT / "game_data.db")
 os.environ["GAME_MONITOR_LOG_DIR"] = str(TEST_ROOT / "logs")
 os.environ["NAVER_AGENT_TOKEN"] = "test-naver-agent-token"
+TEST_DATE = datetime.now().strftime("%Y.%m.%d")
+TEST_DATE_KEY = TEST_DATE.replace(".", "-")
 
 import app  # noqa: E402
 from monitor_modules.naver_reservations import normalize_difficulty  # noqa: E402
@@ -31,7 +34,7 @@ class NaverReservationIntakeTest(unittest.TestCase):
                 "items": [
                     {
                         "bookNo": "TEST-NAVER-1001",
-                        "when": "2026.08.24. 오후 3:30",
+                        "when": f"{TEST_DATE}. 오후 3:30",
                         "product": "점핑배틀 C1",
                         "status": "확정",
                         "name": "테스트고객",
@@ -74,7 +77,7 @@ class NaverReservationIntakeTest(unittest.TestCase):
                 "items": [
                     {
                         "bookNo": "TEST-NAVER-1001",
-                        "when": "2026.08.24. 오후 3:30",
+                        "when": f"{TEST_DATE}. 오후 3:30",
                         "product": "점핑배틀 C1",
                         "status": "취소",
                         "name": "테스트고객",
@@ -93,7 +96,7 @@ class NaverReservationIntakeTest(unittest.TestCase):
                 "SELECT booking_status FROM naver_reservations WHERE booking_id=?", ("TEST-NAVER-1001",)
             ).fetchone()
             no_show_count = connection.execute(
-                "SELECT no_show_count FROM settlement_daily_meta WHERE target_date=?", ("2026-08-24",)
+                "SELECT no_show_count FROM settlement_daily_meta WHERE target_date=?", (TEST_DATE_KEY,)
             ).fetchone()[0]
         self.assertIsNone(cache_row)
         self.assertIsNone(reservation_status)
@@ -106,7 +109,7 @@ class NaverReservationIntakeTest(unittest.TestCase):
                 "items": [
                     {
                         "bookNo": "TEST-NAVER-1001",
-                        "when": "2026.08.24. 오후 3:30",
+                        "when": f"{TEST_DATE}. 오후 3:30",
                         "product": "점핑배틀 C1",
                         "status": "확정",
                         "name": "테스트고객",
@@ -117,7 +120,7 @@ class NaverReservationIntakeTest(unittest.TestCase):
         self.assertEqual(restored.status_code, 200)
         with sqlite3.connect(app.DB_FILE) as connection:
             restored_count = connection.execute(
-                "SELECT no_show_count FROM settlement_daily_meta WHERE target_date=?", ("2026-08-24",)
+                "SELECT no_show_count FROM settlement_daily_meta WHERE target_date=?", (TEST_DATE_KEY,)
             ).fetchone()[0]
             restored_cache = connection.execute(
                 "SELECT status FROM naver_mail_cache WHERE booking_id=?", ("TEST-NAVER-1001",)

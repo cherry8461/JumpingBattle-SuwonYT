@@ -36,6 +36,7 @@ from monitor_core.settings import (
 )
 from monitor_modules.naver_reservations import create_naver_reservations_blueprint
 from monitor_modules.self_reservation_schema import ensure_self_reservation_schema
+from monitor_modules.staff_reservations import create_staff_reservations_blueprint
 
 # ========================================================
 # Flask
@@ -50,6 +51,7 @@ web.wsgi_app = ProxyFix(web.wsgi_app, x_proto=1, x_host=1)
 
 socketio = SocketIO(web, cors_allowed_origins="*", ping_timeout=60, ping_interval=15, async_mode='threading')
 web.register_blueprint(create_naver_reservations_blueprint(socketio))
+web.register_blueprint(create_staff_reservations_blueprint())
 
 OFFSET_FILE = "log_offset.dat"
 PAD_COUNT = 4
