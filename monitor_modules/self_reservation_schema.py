@@ -144,6 +144,27 @@ def ensure_self_reservation_schema(cursor: sqlite3.Cursor) -> None:
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reservation_holiday_calendar_years (
+            calendar_year INTEGER PRIMARY KEY,
+            source TEXT NOT NULL DEFAULT 'nager_date',
+            dates_json TEXT NOT NULL DEFAULT '[]',
+            last_attempt_at TIMESTAMP,
+            last_success_at TIMESTAMP,
+            last_error TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    cursor.executemany(
+        """INSERT OR IGNORE INTO rooms (room_id, display_name, agent_mode, enabled)
+           VALUES (?, ?, 'not_applicable', 1)""",
+        [
+            ("PARTY_SMALL", "파티룸 소형"),
+            ("PARTY_MEDIUM", "파티룸 중형"),
+            ("PARTY_LARGE", "파티룸 대형"),
+        ],
+    )
 
     cursor.executemany(
         """
