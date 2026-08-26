@@ -178,7 +178,7 @@
             listBody.innerHTML = items.map(item => {
                 const cancelled = item.status === 'CANCELED';
                 const statusClass = cancelled ? 'is-cancelled' : (item.status === 'COMPLETED' ? 'is-completed' : 'is-confirmed');
-                const canConvert = !cancelled && item.handling_mode !== 'onsite_payment';
+                const canConvert = cancelled && item.handling_mode !== 'onsite_payment' && item.card_state === 'cancelled_hidden';
                 const actionHtml = canConvert
                     ? `<button class="onsite-payment-btn" data-booking-id="${escapeHtml(item.booking_id)}">현장 결제 전환</button>`
                     : (item.handling_mode === 'onsite_payment' ? '<span class="onsite-payment-done">전환 완료</span>' : '-');
@@ -192,7 +192,8 @@
                 </tr>`;
             }).join('');
             listBody.querySelectorAll('.onsite-payment-btn').forEach(button => {
-                button.addEventListener('click', () => convertToOnsitePayment(button.dataset.bookingId));
+                button.textContent = '게임카드 복구';
+                button.addEventListener('click', () => recoverToOnsitePayment(button.dataset.bookingId));
             });
         } catch (error) {
             console.error('예약자 명단 로드 실패:', error);
@@ -200,18 +201,18 @@
         }
     }
 
-    async function convertToOnsitePayment(bookingId) {
+    async function recoverToOnsitePayment(bookingId) {
         if (!bookingId) return;
         const confirmed = window.confirm(
-            '현장 결제 전환으로 처리할까요?\n\n먼저 이 버튼을 누른 뒤 네이버에서 취소하면 게임 카드는 유지되고 당일취소에 집계되지 않습니다.'
+            '게임카드를 복구할까요?\n\n현장 결제 변경을 위해 직원이 취소한 경우에만 사용하세요. 카드가 다시 나타나고 당일취소 집계도 되돌립니다.'
         );
         if (!confirmed) return;
         try {
-            const response = await fetch(`/api/naver-reservations/${encodeURIComponent(bookingId)}/onsite-payment`, { method: 'POST' });
+            const response = await fetch(`/api/naver-reservations/${encodeURIComponent(bookingId)}/recover-onsite-payment`, { method: 'POST' });
             const body = await response.json().catch(() => ({}));
             if (!response.ok || body.success === false) throw new Error(body.message || '처리에 실패했습니다.');
             await loadReservationList();
-            alert('현장 결제 전환으로 저장되었습니다. 이제 네이버에서 취소 처리해도 게임 카드는 유지됩니다.');
+            alert('게임카드를 복구했습니다. 시간표를 새로고침하면 다시 보입니다.');
         } catch (error) {
             alert(error.message || '처리에 실패했습니다.');
         }

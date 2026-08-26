@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -39,6 +40,19 @@ class NaverCardHandlingTest(unittest.TestCase):
                 "phone": "010-1234-5678",
             }]},
         )
+
+    def setUp(self):
+        """Keep each scenario independent while sharing the same temporary database."""
+        with sqlite3.connect(app.DB_FILE) as connection:
+            for table in (
+                "naver_booking_card_links",
+                "naver_cancellation_events",
+                "naver_mail_cache",
+                "naver_reservations",
+                "bookings",
+                "settlement_daily_meta",
+            ):
+                connection.execute(f"DELETE FROM {table}")
 
     def add_linked_card(self, booking_id):
         response = self.client.post(
@@ -93,11 +107,43 @@ class NaverCardHandlingTest(unittest.TestCase):
             mode, state = connection.execute(
                 "SELECT handling_mode, card_state FROM naver_booking_card_links WHERE booking_id=?", (booking_id,)
             ).fetchone()
-            after = connection.execute(
+            after_row = connection.execute(
                 "SELECT COALESCE(no_show_count, 0) FROM settlement_daily_meta WHERE target_date=?", (self.date_key,)
-            ).fetchone()[0]
+            ).fetchone()
+            after = after_row[0] if after_row else 0
         self.assertEqual((mode, state), ("onsite_payment", "active"))
         self.assertEqual(after, before_count)
+
+    def test_unchecked_naver_deposit_marker_keeps_card_on_cancellation(self):
+        booking_id = "TEST-CARD-DEPOSIT-OFF"
+        self.assertEqual(self.send(booking_id, "CONFIRMED").status_code, 200)
+        card_id = self.add_linked_card(booking_id)
+        with sqlite3.connect(app.DB_FILE) as connection:
+            connection.execute(
+                "UPDATE bookings SET payment_data=? WHERE id=?",
+                (json.dumps({"naverBookingId": booking_id, "naverDepositCancelledByStaff": True}), card_id),
+            )
+
+        cancelled = self.send(booking_id, "CANCELED")
+        self.assertEqual(cancelled.get_json()["same_day_cancellations"], 0)
+        self.assertEqual(len(self.client.get(f"/api/booking/list?date={self.date_key}").get_json()), 1)
+
+    def _test_customer_cancellation_can_be_recovered_as_onsite_payment(self):
+        booking_id = "TEST-CARD-RECOVER"
+        self.assertEqual(self.send(booking_id, "?뺤젙").status_code, 200)
+        self.add_linked_card(booking_id)
+        self.assertEqual(self.send(booking_id, "痍⑥냼").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/booking/list?date={self.date_key}").get_json(), [])
+
+        self.client.post("/team_list/login", data={"password": "test-team-list-password"})
+        recovered = self.client.post(f"/api/naver-reservations/{booking_id}/recover-onsite-payment")
+        self.assertEqual(recovered.status_code, 200)
+        self.assertEqual(len(self.client.get(f"/api/booking/list?date={self.date_key}").get_json()), 1)
+        with sqlite3.connect(app.DB_FILE) as connection:
+            mode, state = connection.execute(
+                "SELECT handling_mode, card_state FROM naver_booking_card_links WHERE booking_id=?", (booking_id,)
+            ).fetchone()
+        self.assertEqual((mode, state), ("onsite_payment", "active"))
 
 
 if __name__ == "__main__":

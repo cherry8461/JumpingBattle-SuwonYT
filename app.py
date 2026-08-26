@@ -2593,7 +2593,8 @@ def get_naver_reservation_list():
             SELECT reservation.booking_id, reservation.booking_status, reservation.use_time_key, reservation.room_name, reservation.product_name,
                    customer_name, team_name, difficulty, phone, people_count,
                    first_seen_at, reservation.updated_at, cancelled_at,
-                   COALESCE(link.handling_mode, 'standard') AS handling_mode
+                   COALESCE(link.handling_mode, 'standard') AS handling_mode,
+                   COALESCE(link.card_state, '') AS card_state
               FROM naver_reservations AS reservation
               LEFT JOIN naver_booking_card_links AS link ON link.booking_id=reservation.booking_id
              WHERE reservation.use_date=?
@@ -2608,6 +2609,7 @@ def get_naver_reservation_list():
             'status': row[1],
             'status_label': '현장 결제 전환' if row[13] == 'onsite_payment' else status_labels.get(row[1], row[1]),
             'handling_mode': row[13],
+            'card_state': row[14],
             'time': str(row[2] or '').replace('-', ':'),
             'room': row[3] or '-',
             'product': row[4] or '-',
@@ -2658,11 +2660,11 @@ def convert_naver_reservation_to_onsite_payment(booking_id):
         except (TypeError, json.JSONDecodeError):
             payment_data = {}
         payment_data.update({
-            'isBooker': True,
+            'isBooker': False,
             'depositPaid': False,
             'depositAmount': 0,
-            'onsitePayment': True,
             'naverBookingId': booking_id,
+            'naverDepositCancelledByStaff': True,
         })
         conn.execute(
             "UPDATE bookings SET payment_data=? WHERE id=?",
@@ -2675,6 +2677,60 @@ def convert_naver_reservation_to_onsite_payment(booking_id):
             (booking_id,),
         )
     return jsonify({'success': True, 'message': '현장 결제 전환으로 처리했습니다.'})
+
+@web.route('/api/naver-reservations/<booking_id>/recover-onsite-payment', methods=['POST'])
+@team_list_api_required
+def recover_naver_reservation_to_onsite_payment(booking_id):
+    """Restore a customer-cancelled game card as an onsite-payment reservation."""
+    booking_id = str(booking_id or '').strip()
+    if not booking_id or len(booking_id) > 100:
+        return jsonify({'success': False, 'message': '예약번호가 올바르지 않습니다.'}), 400
+
+    with get_db_connection() as conn:
+        reservation = conn.execute(
+            "SELECT booking_status, use_date FROM naver_reservations WHERE booking_id=?",
+            (booking_id,),
+        ).fetchone()
+        link = conn.execute(
+            "SELECT booking_row_id, card_state FROM naver_booking_card_links WHERE booking_id=?",
+            (booking_id,),
+        ).fetchone()
+        if not reservation:
+            return jsonify({'success': False, 'message': '예약 원본을 찾을 수 없습니다.'}), 404
+        if reservation[0] != 'CANCELED':
+            return jsonify({'success': False, 'message': '고객 취소 처리된 예약만 복구할 수 있습니다.'}), 409
+        if not link or not link[0] or link[1] != 'cancelled_hidden':
+            return jsonify({'success': False, 'message': '복구할 게임 카드를 찾을 수 없습니다.'}), 409
+
+        booking = conn.execute("SELECT payment_data FROM bookings WHERE id=?", (link[0],)).fetchone()
+        if not booking:
+            return jsonify({'success': False, 'message': '연결된 게임 카드를 찾을 수 없습니다.'}), 409
+        try:
+            payment_data = json.loads(booking[0] or '{}')
+        except (TypeError, json.JSONDecodeError):
+            payment_data = {}
+        payment_data.update({
+            'isBooker': True,
+            'depositPaid': False,
+            'depositAmount': 0,
+            'onsitePayment': True,
+            'naverBookingId': booking_id,
+        })
+        conn.execute("UPDATE bookings SET payment_data=? WHERE id=?", (json.dumps(payment_data, ensure_ascii=False), link[0]))
+        conn.execute(
+            "UPDATE naver_booking_card_links SET handling_mode='standard', card_state='active', updated_at=CURRENT_TIMESTAMP WHERE booking_id=?",
+            (booking_id,),
+        )
+
+        # Remove only the automatic count created by this exact customer cancellation.
+        deleted = conn.execute("DELETE FROM naver_cancellation_events WHERE booking_id=?", (booking_id,)).rowcount
+        if deleted and reservation[1] == datetime.now().strftime('%Y-%m-%d'):
+            conn.execute(
+                "UPDATE settlement_daily_meta SET no_show_count=MAX(no_show_count - 1, 0), updated_at=datetime('now', 'localtime') WHERE target_date=?",
+                (reservation[1],),
+            )
+    return jsonify({'success': True, 'message': '게임 카드를 복구했습니다.'})
+
 
 @web.route('/api/naver-bookings/today-init', methods=['GET'])
 def get_today_init_bookings():

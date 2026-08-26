@@ -74,8 +74,14 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                 )
 
                 handling_mode, dashboard_booking_id = get_card_link(cursor, normalized["booking_id"])
+                # A staff member uses the existing reservation-deposit checkbox.
+                # Only its explicit saved marker can keep a cancelled card visible.
+                keep_card_for_onsite_payment = (
+                    handling_mode == "onsite_payment"
+                    or is_linked_card_marked_for_onsite_payment(cursor, dashboard_booking_id)
+                )
                 if normalized["is_cancelled"]:
-                    if handling_mode != "onsite_payment":
+                    if not keep_card_for_onsite_payment:
                         if register_cancellation(cursor, normalized["booking_id"], normalized["use_date"]):
                             same_day_cancellations += 1
                         if dashboard_booking_id:
@@ -86,7 +92,7 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
                 elif normalized["is_actionable"]:
                     restore_reversed_cancellation(cursor, normalized["booking_id"], normalized["use_date"])
-                    if handling_mode == "onsite_payment":
+                    if keep_card_for_onsite_payment:
                         accepted += 1
                         continue
                     cursor.execute(
@@ -137,6 +143,21 @@ def get_card_link(cursor, booking_id: str) -> tuple[str, int | None]:
     if not row:
         return "standard", None
     return str(row[0] or "standard"), int(row[1]) if row[1] else None
+
+
+def is_linked_card_marked_for_onsite_payment(cursor, dashboard_booking_id: int | None) -> bool:
+    """Read the explicit marker written when staff uncheck a Naver deposit."""
+    if not dashboard_booking_id:
+        return False
+    cursor.execute("SELECT payment_data FROM bookings WHERE id=?", (dashboard_booking_id,))
+    row = cursor.fetchone()
+    if not row:
+        return False
+    try:
+        payment_data = json.loads(row[0] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return payment_data.get("naverDepositCancelledByStaff") is True
 
 
 def normalize_item(item: object) -> dict | None:

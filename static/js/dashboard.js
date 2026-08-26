@@ -3262,6 +3262,14 @@ function onDepositCheckboxChange() {
     const depositCheckbox = document.getElementById('depositPaid');
     if (!depositCheckbox) return;
     const isChecked = depositCheckbox.checked;
+    const currentData = currentPaymentCard ? parsePaymentDataSafe(currentPaymentCard.dataset.paymentData) : null;
+    if (currentData?.naverBookingId) {
+        // The existing checkbox remains the only staff control.  Store an
+        // explicit marker so a never-configured card is not mistaken for a
+        // deliberate onsite-payment conversion.
+        currentData.naverDepositCancelledByStaff = !isChecked;
+        currentPaymentCard.dataset.paymentData = JSON.stringify(currentData);
+    }
     updateBookerBadgeAndCheckbox(isChecked);
     calculatePayment();
 }
@@ -6521,6 +6529,8 @@ function savePaymentInfo(closeAfterSave = true) {
         nonCardAdultCount,
         isBooker,
         depositPaid,
+        naverBookingId: basePaymentData?.naverBookingId || '',
+        naverDepositCancelledByStaff: !!basePaymentData?.naverDepositCancelledByStaff,
         reservationTime,
         partyRoom,
         roomFlags,
