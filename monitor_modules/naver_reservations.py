@@ -131,6 +131,53 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
             same_day_cancellations=same_day_cancellations,
         )
 
+    @blueprint.get("/api/integrations/naver/stock-plan")
+    def get_stock_plan():
+        """Return local, non-Naver cards that must close Naver availability.
+
+        Naver-originated cards are excluded: Naver already owns their stock.
+        This endpoint only supplies a plan; the logged-in Chrome extension is
+        the sole component that can change Naver availability.
+        """
+        expected_token = os.getenv("NAVER_AGENT_TOKEN", "")
+        provided_token = request.headers.get("x-jumping-agent-token", "")
+        if not expected_token or not hmac.compare_digest(provided_token, expected_token):
+            return jsonify(success=False, message="Unauthorized agent"), 401
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        with get_db_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT booking_date, time_key, room
+                  FROM bookings AS booking
+                  LEFT JOIN naver_booking_card_links AS link ON link.booking_row_id=booking.id
+                 WHERE booking_date >= ?
+                   AND booking_date <= date(?, '+14 days')
+                   AND COALESCE(booking.completed, 0)=0
+                   AND UPPER(TRIM(booking.room)) IN ('C1', 'C2', 'B1', 'B2')
+                   AND link.booking_id IS NULL
+                 GROUP BY booking_date, time_key, room
+                 ORDER BY booking_date, time_key, room
+                """,
+                (today, today),
+            ).fetchall()
+        slots = []
+        for row in rows:
+            if not (row[0] and row[1] and row[2]):
+                continue
+            time_parts = re.findall(r"\d+", str(row[1]))
+            if len(time_parts) < 2:
+                continue
+            hour, minute = (int(time_parts[0]), int(time_parts[1]))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                continue
+            slots.append({
+                "room": row[2],
+                "date": row[0],
+                "time": f"{hour:02d}:{minute:02d}",
+            })
+        return jsonify(success=True, slots=slots)
+
     return blueprint
 
 

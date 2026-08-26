@@ -7,6 +7,8 @@ const BUSINESS_TYPE_ID = 12;
 const CONFIRMED_STATUS_CODE = "RC03";
 const ALARM_NAME = "suwonyeongtong-naver-poll";
 const DELIVERY_STATE_KEY = "delivery-state";
+const STOCK_STATE_KEY = "naver-stock-closed-by-extension";
+const NAVER_WRITE_AUTH_KEY = "naver-write-auth";
 const KST_TIME_ZONE = "Asia/Seoul";
 const EXTENSION_BUILD = "suwonyt-force-sync-20260824-01";
 
@@ -45,12 +47,17 @@ function whenInKst(value) {
 }
 
 async function fetchJson(url, label) {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: { accept: "application/json" },
-    credentials: "include",
-    cache: "no-store"
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      credentials: "include",
+      cache: "no-store"
+    });
+  } catch (error) {
+    throw new Error(`${label} 연결 실패: ${error?.message || error}`);
+  }
   const text = await response.text();
   if (response.status === 401 || response.status === 403 || /nidlogin\.login/i.test(response.url || "")) {
     throw new Error("Chrome에서 네이버 예약 파트너 로그인이 필요합니다.");
@@ -173,6 +180,13 @@ async function syncReservations(force = false) {
     product: item.product
   })));
   const delivery = await sendChangedBookings([...byId.values()], force);
+  // Stock changes never affect reservation collection.  A missing login or a
+  // changed Naver API therefore fails closed and leaves collection running.
+  try {
+    await syncLocalStockToNaver();
+  } catch (error) {
+    console.warn("[SuwonYT Naver] stock sync skipped", error.message || error);
+  }
   console.info("[SuwonYT Naver] synchronized", {
     build: EXTENSION_BUILD,
     force,
@@ -181,6 +195,126 @@ async function syncReservations(force = false) {
   });
   return { bookings: byId.size, ...delivery };
 }
+
+function roomCodeFromItem(item) {
+  const label = [item?.bizItemName, item?.name, item?.productName, item?.title]
+    .map(value => String(value || "")).join(" ").toUpperCase();
+  const match = label.match(/\b(C1|C2|B1|B2)\b/);
+  return match ? match[1] : "";
+}
+
+async function discoverRoomItemIds() {
+  const { startIso, endIso } = bookingRange();
+  const url = new URL(`${NAVER_API_BASE}/businesses/${CONFIG.businessId}/booking-status`);
+  url.searchParams.set("businessTypeId", String(BUSINESS_TYPE_ID));
+  url.searchParams.set("startDate", startIso);
+  url.searchParams.set("endDate", endIso);
+  url.searchParams.set("includeTodaySchedule", "false");
+  url.searchParams.set("includeTotal", "false");
+  url.searchParams.set("interval", "30");
+  url.searchParams.set("schedules", "business,bizItems");
+  const body = await fetchJson(url.href, "상품 목록");
+  const configured = CONFIG.roomBizItemIds || {};
+  const mapped = { ...configured };
+  (Array.isArray(body?.bizItems) ? body.bizItems : []).forEach(item => {
+    const room = roomCodeFromItem(item);
+    const itemId = Number(item?.bizItemId);
+    if (room && Number.isFinite(itemId) && !mapped[room]) mapped[room] = itemId;
+  });
+  return mapped;
+}
+
+async function getNaverCsrfToken() {
+  const stored = await chrome.storage.local.get(NAVER_WRITE_AUTH_KEY);
+  const captured = stored[NAVER_WRITE_AUTH_KEY];
+  if (captured?.csrfToken && Date.now() - Number(captured.capturedAt || 0) < 8 * 60 * 60 * 1000) {
+    return captured;
+  }
+  const url = "https://api-partner.booking.naver.com/v3.1/csrf-token";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { accept: "application/json", "x-booking-naver-role": "OWNER" },
+    credentials: "include",
+    cache: "no-store"
+  });
+  const body = await response.json().catch(() => ({}));
+  const token = body?.csrfToken || body?.token || "";
+  if (!response.ok || !token) throw new Error("Naver write authorization is unavailable; open the booking calendar once after login.");
+  return { csrfToken: token, role: "OWNER" };
+}
+
+async function patchNaverStock(roomItemId, slot, writeAuth) {
+  const url = `https://api-partner.booking.naver.com/v3.1/businesses/${CONFIG.businessId}/biz-items/${roomItemId}/schedules`;
+  const [tab] = await chrome.tabs.query({ url: "https://partner.booking.naver.com/*" });
+  if (!tab?.id) throw new Error("Open the Naver booking calendar in Chrome before stock sync.");
+  const payload = { startTime: slot.time, startDate: slot.date, endDate: slot.date, status: "ON", stock: 0 };
+  console.info("[SuwonYT Naver] stock patch request", { roomItemId, payload });
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    args: [url, payload, writeAuth.csrfToken, writeAuth.role || "OWNER"],
+    func: async (requestUrl, requestBody, csrfToken, role) => {
+      const response = await fetch(requestUrl, {
+        method: "PATCH",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json;charset=UTF-8",
+          "x-booking-naver-role": role,
+          "x-csrf-token": csrfToken
+        },
+        credentials: "include",
+        body: JSON.stringify(requestBody)
+      });
+      return { ok: response.ok, status: response.status, text: (await response.text()).slice(0, 160) };
+    }
+  });
+  if (!result?.ok) throw new Error(`Naver stock PATCH HTTP ${result?.status || "failed"}: ${result?.text || "no response"}`);
+}
+
+async function syncLocalStockToNaver() {
+  const dryRun = CONFIG.stockSyncEnabled === "dry-run";
+  if (CONFIG.stockSyncEnabled !== true && !dryRun) return;
+  const planEndpoint = CONFIG.stockPlanEndpoint || String(CONFIG.endpoint || "").replace("/reservations", "/stock-plan");
+  const response = await fetch(planEndpoint, {
+    headers: { "x-jumping-agent-token": CONFIG.agentToken }, cache: "no-store"
+  });
+  const plan = await response.json().catch(() => ({}));
+  if (!response.ok || plan.success === false || !Array.isArray(plan.slots)) throw new Error("Local stock plan unavailable");
+  const roomItemIds = await discoverRoomItemIds();
+  const stored = await chrome.storage.local.get(STOCK_STATE_KEY);
+  const closed = stored[STOCK_STATE_KEY] || {};
+  let writeAuth = null;
+  for (const slot of plan.slots) {
+    const roomItemId = Number(roomItemIds[slot.room]);
+    const key = `${slot.room}|${slot.date}|${slot.time}`;
+    if (!Number.isFinite(roomItemId) || closed[key]) continue;
+    if (dryRun) {
+      console.info("[SuwonYT Naver] stock dry-run", { slot, roomItemId });
+      continue;
+    }
+    if (!writeAuth) writeAuth = await getNaverCsrfToken();
+    await patchNaverStock(roomItemId, slot, writeAuth);
+    closed[key] = { roomItemId, closedAt: new Date().toISOString() };
+  }
+  await chrome.storage.local.set({ [STOCK_STATE_KEY]: closed });
+}
+
+// Capture only the short-lived CSRF header that Chrome already sends for a
+// staff-initiated schedule edit.  It is kept in extension storage briefly,
+// never sent to the local server, logged, or committed to Git.
+chrome.webRequest.onBeforeSendHeaders.addListener(details => {
+  if (details.method !== "PATCH" || !/\/schedules(?:\?|$)/.test(details.url)) return;
+  const headers = Object.fromEntries((details.requestHeaders || []).map(header => [String(header.name || "").toLowerCase(), header.value || ""]));
+  const csrfToken = headers["x-csrf-token"];
+  if (!csrfToken) return;
+  chrome.storage.local.set({
+    [NAVER_WRITE_AUTH_KEY]: {
+      csrfToken,
+      role: headers["x-booking-naver-role"] || "OWNER",
+      capturedAt: Date.now()
+    }
+  }).then(() => console.info("[SuwonYT Naver] write authorization captured"));
+}, { urls: ["https://api-partner.booking.naver.com/*"] }, ["requestHeaders"]);
 
 async function ensureAlarm() {
   const periodInMinutes = Math.max(Number(CONFIG.pollMinutes) || 1, 1);
