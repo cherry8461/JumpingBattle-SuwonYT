@@ -28,6 +28,11 @@ def create_customer_reservations_blueprint() -> Blueprint:
     def reserve_page():
         return render_template("reserve.html")
 
+    @blueprint.get("/my-reservations")
+    def my_reservations_page():
+        """Safe entry point for customer reservation lookup and cancellation."""
+        return render_template("my_reservations.html")
+
     @blueprint.get("/api/public-reservations/availability")
     def availability():
         target_date = _parse_target_date(request.args.get("date"))

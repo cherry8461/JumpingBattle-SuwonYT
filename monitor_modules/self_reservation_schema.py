@@ -156,15 +156,25 @@ def ensure_self_reservation_schema(cursor: sqlite3.Cursor) -> None:
         )
         """
     )
-    cursor.executemany(
-        """INSERT OR IGNORE INTO rooms (room_id, display_name, agent_mode, enabled)
-           VALUES (?, ?, 'not_applicable', 1)""",
-        [
-            ("PARTY_SMALL", "파티룸 소형"),
-            ("PARTY_MEDIUM", "파티룸 중형"),
-            ("PARTY_LARGE", "파티룸 대형"),
-        ],
-    )
+    party_rooms = [
+        ("PARTY_SMALL", "파티룸 소형"),
+        ("PARTY_MEDIUM", "파티룸 중형"),
+        ("PARTY_LARGE", "파티룸 대형"),
+    ]
+    room_columns = {row[1] for row in cursor.execute("PRAGMA table_info(rooms)").fetchall()}
+    if {"display_name", "agent_mode", "enabled"}.issubset(room_columns):
+        cursor.executemany(
+            """INSERT OR IGNORE INTO rooms (room_id, display_name, agent_mode, enabled)
+               VALUES (?, ?, 'not_applicable', 1)""",
+            party_rooms,
+        )
+    else:
+        # The minimal table is used by schema-only tests.  The real application
+        # has the richer room metadata columns handled above.
+        cursor.executemany(
+            "INSERT OR IGNORE INTO rooms (room_id) VALUES (?)",
+            [(room_id,) for room_id, _ in party_rooms],
+        )
 
     cursor.executemany(
         """
