@@ -1,7 +1,8 @@
 body { font-family: sans-serif; background: #f8f9fa; margin: 20px; color: #333; }
-.page-header { margin-bottom: 20px; }
+.page-header { margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .page-header h1 { font-size: 22px; margin: 0; }
 .page-header p { font-size: 13px; color: #666; }
+.logout-btn { color: #475569; background: #fff; }
 
 /* 컨트롤 바 (정산페이지와 유사) */
 .control-bar {
@@ -93,3 +94,16 @@ th { background: #fcfcfc; color: #777; font-weight: bold; }
 .walkin-table th {
     background-color: #f8f9fa;
 }
+
+.reservation-list-container { padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,.1); overflow-x: auto; }
+.reservation-list-guide { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; background: #f0f8ff; color: #245b8f; font-size: 13px; }
+.reservation-table { min-width: 960px; }
+.reservation-table th, .reservation-table td { padding: 11px 8px; }
+.reservation-status { display: inline-block; min-width: 54px; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.reservation-status.is-confirmed { background: #e8f7ec; color: #16743a; }
+.reservation-status.is-completed { background: #edf1f5; color: #536273; }
+.reservation-status.is-cancelled { background: #fff0f0; color: #c83434; }
+.reservation-cancelled { color: #999; background: #fafafa; }
+.reservation-cancelled td:not(:first-child) { text-decoration: line-through; text-decoration-color: #d0d0d0; }
+.reservation-product { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reservation-id { color: #758195; font-family: monospace; font-size: 11px; }

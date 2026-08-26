@@ -99,7 +99,7 @@ class NaverReservationIntakeTest(unittest.TestCase):
                 "SELECT no_show_count FROM settlement_daily_meta WHERE target_date=?", (TEST_DATE_KEY,)
             ).fetchone()[0]
         self.assertIsNone(cache_row)
-        self.assertIsNone(reservation_status)
+        self.assertEqual(reservation_status[0], "CANCELED")
         self.assertEqual(no_show_count, 1)
 
         restored = self.client.post(

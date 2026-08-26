@@ -77,7 +77,6 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     if register_cancellation(cursor, normalized["booking_id"], normalized["use_date"]):
                         same_day_cancellations += 1
                     cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
-                    cursor.execute("DELETE FROM naver_reservations WHERE booking_id=?", (normalized["booking_id"],))
                 elif normalized["is_actionable"]:
                     restore_reversed_cancellation(cursor, normalized["booking_id"], normalized["use_date"])
                     cursor.execute(

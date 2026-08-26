@@ -10,13 +10,15 @@ import imaplib
 import email
 import base64
 import logging
+import hmac
+from functools import wraps
 from io import BytesIO
 from dotenv import load_dotenv
 from email.header import decode_header
 from datetime import datetime, timedelta
 
 # Flask 및 SocketIO (가장 표준적인 형태)
-from flask import Flask, render_template, render_template_string, request, redirect, url_for, jsonify, send_file
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, jsonify, send_file, session
 from flask_socketio import SocketIO, emit
 
 # 엑셀 및 기타
@@ -556,6 +558,28 @@ def init_db():
         cur.execute("ALTER TABLE walkins ADD COLUMN adult_count INTEGER DEFAULT 0")
     if 'child_count' not in walkin_columns:
         cur.execute("ALTER TABLE walkins ADD COLUMN child_count INTEGER DEFAULT 0")
+    if 'initial_level' not in walkin_columns:
+        cur.execute("ALTER TABLE walkins ADD COLUMN initial_level TEXT")
+    if 'initial_room_size' not in walkin_columns:
+        cur.execute("ALTER TABLE walkins ADD COLUMN initial_room_size TEXT")
+    if 'initial_room_fast' not in walkin_columns:
+        cur.execute("ALTER TABLE walkins ADD COLUMN initial_room_fast INTEGER")
+
+    # The staff list is an intake record.  Keep its initial choice separate
+    # from a game card's later operational edits.
+    intake_level_col = 'level' if 'level' in walkin_columns else 'diff'
+    cur.execute(
+        f"UPDATE walkins SET initial_level={intake_level_col} "
+        "WHERE initial_level IS NULL OR initial_level=''"
+    )
+    cur.execute(
+        "UPDATE walkins SET initial_room_size=room_size "
+        "WHERE initial_room_size IS NULL OR initial_room_size=''"
+    )
+    cur.execute(
+        "UPDATE walkins SET initial_room_fast=room_fast "
+        "WHERE initial_room_fast IS NULL"
+    )
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS account_deposit (
@@ -1672,12 +1696,45 @@ def team_search():
     return jsonify(rows)
 
 
-@web.route('/team_list')
+TEAM_LIST_SESSION_KEY = 'team_list_authenticated'
+
+
+def team_list_api_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if session.get(TEAM_LIST_SESSION_KEY):
+            return view(*args, **kwargs)
+        return jsonify({'success': False, 'message': '직원 로그인이 필요합니다.'}), 401
+    return wrapped
+
+
+@web.route('/team_list', methods=['GET'])
 def team_list_page():
+    if not os.getenv('TEAM_LIST_PASSWORD'):
+        return 'TEAM_LIST_PASSWORD 설정이 필요합니다.', 503
+    if not session.get(TEAM_LIST_SESSION_KEY):
+        return render_template('team_list_login.html')
     return render_template('team_list.html')
 
 
+@web.route('/team_list/login', methods=['POST'])
+def team_list_login():
+    expected_password = os.getenv('TEAM_LIST_PASSWORD', '')
+    supplied_password = request.form.get('password', '')
+    if expected_password and hmac.compare_digest(supplied_password, expected_password):
+        session[TEAM_LIST_SESSION_KEY] = True
+        return redirect(url_for('team_list_page'))
+    return render_template('team_list_login.html', error='비밀번호가 올바르지 않습니다.'), 401
+
+
+@web.route('/team_list/logout', methods=['POST'])
+def team_list_logout():
+    session.pop(TEAM_LIST_SESSION_KEY, None)
+    return redirect(url_for('team_list_page'))
+
+
 @web.route('/api/teams')
+@team_list_api_required
 def get_teams():
     # 1. 프론트엔드에서 보낸 날짜 파라미터를 읽습니다. (없으면 오늘 날짜)
     target_date = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
@@ -2486,6 +2543,53 @@ def add_queue_item():
 # Web - Reservation from Naver Booking
 # ========================================================
 
+@web.route('/api/naver-reservations', methods=['GET'])
+@team_list_api_required
+def get_naver_reservation_list():
+    target_date = (request.args.get('date') or datetime.now().strftime('%Y-%m-%d')).strip()
+    try:
+        datetime.strptime(target_date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'success': False, 'message': '날짜 형식이 올바르지 않습니다.'}), 400
+
+    status_labels = {
+        'CONFIRMED': '예약',
+        'COMPLETED': '이용 완료',
+        'CANCELED': '취소',
+    }
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            '''
+            SELECT booking_id, booking_status, use_time_key, room_name, product_name,
+                   customer_name, team_name, difficulty, phone, people_count,
+                   first_seen_at, updated_at, cancelled_at
+              FROM naver_reservations
+             WHERE use_date=?
+             ORDER BY use_time_key ASC, room_name ASC, first_seen_at ASC
+            ''',
+            (target_date,),
+        ).fetchall()
+
+    return jsonify([
+        {
+            'booking_id': row['booking_id'],
+            'status': row['booking_status'],
+            'status_label': status_labels.get(row['booking_status'], row['booking_status']),
+            'time': str(row['use_time_key'] or '').replace('-', ':'),
+            'room': row['room_name'] or '-',
+            'product': row['product_name'] or '-',
+            'name': row['customer_name'] or '-',
+            'team': row['team_name'] or '-',
+            'difficulty': row['difficulty'] or '-',
+            'phone': row['phone'] or '-',
+            'people': '' if not row['people_count'] else row['people_count'],
+            'received_at': row['first_seen_at'] or '',
+            'updated_at': row['updated_at'] or '',
+            'cancelled_at': row['cancelled_at'] or '',
+        }
+        for row in rows
+    ])
+
 @web.route('/api/naver-bookings/today-init', methods=['GET'])
 def get_today_init_bookings():
     today_str = datetime.now().strftime('%Y-%m-%d') # 오늘 날짜 (2026-05-18)
@@ -3046,14 +3150,14 @@ def add_walkin():
 
     if {'level', 'people'}.issubset(columns):
         query = '''INSERT INTO walkins 
-           (name, team, level, people, room_size, room_fast, adult_count, child_count, phone, is_agreed, visit_date, visit_time, status) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting')'''
-        params = (name, team, level, people, room_size, room_fast, adult_count, child_count, phone, agreed, visit_date, visit_time)
+           (name, team, level, people, room_size, room_fast, initial_level, initial_room_size, initial_room_fast, adult_count, child_count, phone, is_agreed, visit_date, visit_time, status) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting')'''
+        params = (name, team, level, people, room_size, room_fast, level, room_size, room_fast, adult_count, child_count, phone, agreed, visit_date, visit_time)
     else:
         query = '''INSERT INTO walkins 
-           (name, team, level, person, room_size, room_fast, adult_count, child_count, phone, is_agreed, visit_date, visit_time, status) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting')'''
-        params = (name, team, level, people, room_size, room_fast, adult_count, child_count, phone, agreed, visit_date, visit_time)
+           (name, team, diff, person, room_size, room_fast, initial_level, initial_room_size, initial_room_fast, adult_count, child_count, phone, is_agreed, visit_date, visit_time, status) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting')'''
+        params = (name, team, level, people, room_size, room_fast, level, room_size, room_fast, adult_count, child_count, phone, agreed, visit_date, visit_time)
 
     c.execute(query, params)
     conn.commit()
@@ -3121,6 +3225,7 @@ def complete_walkin():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @web.route('/api/walkin/history') # 경로를 구분해줍니다
+@team_list_api_required
 def get_walkin_history():
     target_date = request.args.get('date') # JS에서 보낸 날짜값
     
@@ -3132,20 +3237,21 @@ def get_walkin_history():
     columns = {row[1] for row in c.fetchall()}
     
     level_col = 'level' if 'level' in columns else 'diff'
+    intake_level_col = 'initial_level' if 'initial_level' in columns else level_col
     people_col = 'people' if 'people' in columns else 'person'
     adult_col = 'adult_count' if 'adult_count' in columns else '0'
     child_col = 'child_count' if 'child_count' in columns else '0'
     visit_date_col = 'visit_date' if 'visit_date' in columns else "strftime('%Y-%m-%d', 'now')"
 
     # 방 사이즈 관련 컬럼 체크 (room_size, room_fast)
-    size_col = 'room_size' if 'room_size' in columns else "''"
-    fast_col = 'room_fast' if 'room_fast' in columns else "0"
+    size_col = 'initial_room_size' if 'initial_room_size' in columns else ('room_size' if 'room_size' in columns else "''")
+    fast_col = 'initial_room_fast' if 'initial_room_fast' in columns else ('room_fast' if 'room_fast' in columns else "0")
 
     # 쿼리: 특정 날짜의 데이터를 시간순(visit_time)으로 정렬
     # 만약 visit_time이 없다면 id 순으로 정렬합니다.
     time_sort = "visit_time ASC" if 'visit_time' in columns else "id ASC"
     
-    c.execute(f'''SELECT id, name, team, {level_col}, {people_col}, {adult_col}, {child_col}, phone, visit_time, status, {size_col}, {fast_col}
+    c.execute(f'''SELECT id, name, team, {intake_level_col}, {people_col}, {adult_col}, {child_col}, phone, visit_time, status, {size_col}, {fast_col}
                  FROM walkins 
                  WHERE visit_date = ?
                  ORDER BY {time_sort}''', (target_date,))

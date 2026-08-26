@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>직원 명단 조회</title>
+    <style>
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Arial, sans-serif; background: #f4f7fb; color: #1f2937; }
+        main { width: min(360px, calc(100% - 40px)); box-sizing: border-box; padding: 32px; background: #fff; border-radius: 14px; box-shadow: 0 12px 30px rgba(15, 23, 42, .12); }
+        h1 { margin: 0 0 8px; font-size: 22px; } p { margin: 0 0 22px; color: #64748b; font-size: 14px; line-height: 1.5; }
+        label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 700; } input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 16px; }
+        button { width: 100%; margin-top: 16px; padding: 12px; border: 0; border-radius: 8px; background: #1d4ed8; color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; }
+        .error { margin: 0 0 14px; padding: 10px; border-radius: 7px; background: #fff1f2; color: #be123c; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>직원 명단 조회</h1>
+        <p>팀 현황, 예약자 명단, 워크인 명단은 직원만 확인할 수 있습니다.</p>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <form method="post" action="{{ url_for('team_list_login') }}">
+            <label for="password">직원 비밀번호</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+            <button type="submit">확인</button>
+        </form>
+    </main>
+</body>
+</html>

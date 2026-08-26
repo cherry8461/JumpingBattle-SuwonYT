@@ -2,7 +2,6 @@
     const DATE_STORAGE_KEY = 'teamListTargetDate';
     const ROOM_ORDER = ['C1', 'C2', 'B1', 'B2'];
     const onsetMap = { 'ㅂ':'베이직','ㅇ':'이지','ㄴ':'노멀','ㅎ':'하드','ㅊ':'챌린저','ㅋ':'키즈','ㄹ':'여름','ㅈ':'우주','ㅅ':'산타' };
-    const STAFF_VIEW_PASSWORD = "0308";
 
     // 1. 날짜 유틸리티
     function todayYmd() {
@@ -39,6 +38,8 @@
     }
 
     (function() {
+        // Access is verified by the server-side team-list login.
+        return;
         // 1. 비밀번호가 자동으로 가려지도록 임시 입력창(password)을 생성
         const tempInput = document.createElement('input');
         tempInput.type = 'password';
@@ -64,6 +65,8 @@
         const target = activeTab.dataset.tab;
         if (target === 'walkin-list') {
             await loadWalkinList();
+        } else if (target === 'reservation-list') {
+            await loadReservationList();
         } else {
             await fetchTeamList();
         }
@@ -150,6 +153,43 @@
             });
         } catch (error) {
             console.error('워크인 로드 실패:', error);
+        }
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>'"]/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        }[char]));
+    }
+
+    async function loadReservationList() {
+        const date = document.getElementById('searchDate').value;
+        const listBody = document.getElementById('reservationListBody');
+        if (!date || !listBody) return;
+
+        try {
+            const response = await fetch(`/api/naver-reservations?date=${encodeURIComponent(date)}`);
+            if (!response.ok) throw new Error('예약자 명단을 불러오지 못했습니다.');
+            const items = await response.json();
+            if (!Array.isArray(items) || items.length === 0) {
+                listBody.innerHTML = '<tr><td colspan="10" class="empty-row">예약 내역이 없습니다.</td></tr>';
+                return;
+            }
+            listBody.innerHTML = items.map(item => {
+                const cancelled = item.status === 'CANCELED';
+                const statusClass = cancelled ? 'is-cancelled' : (item.status === 'COMPLETED' ? 'is-completed' : 'is-confirmed');
+                return `<tr class="${cancelled ? 'reservation-cancelled' : ''}">
+                    <td><span class="reservation-status ${statusClass}">${escapeHtml(item.status_label)}</span></td>
+                    <td>${escapeHtml(item.time)}</td><td><strong>${escapeHtml(item.room)}</strong></td>
+                    <td><strong>${escapeHtml(item.team)}</strong></td><td>${escapeHtml(item.name)}</td>
+                    <td>${escapeHtml(item.phone)}</td><td>${escapeHtml(item.difficulty)}</td>
+                    <td>${escapeHtml(item.people || '-')}</td><td class="reservation-product">${escapeHtml(item.product)}</td>
+                    <td class="reservation-id">${escapeHtml(item.booking_id)}</td>
+                </tr>`;
+            }).join('');
+        } catch (error) {
+            console.error('예약자 명단 로드 실패:', error);
+            listBody.innerHTML = '<tr><td colspan="10" class="empty-row">예약자 명단을 불러오지 못했습니다.</td></tr>';
         }
     }
 

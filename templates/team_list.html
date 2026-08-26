@@ -9,10 +9,14 @@
 <body>
     <header class="page-header">
         <h1>전체 팀 현황</h1>
+        <form method="post" action="{{ url_for('team_list_logout') }}">
+            <button type="submit" class="logout-btn">로그아웃</button>
+        </form>
     </header>
 
     <nav class="tab-menu">
         <button class="tab-btn active" data-tab="team-management">전체 팀 현황 관리</button>
+        <button class="tab-btn" data-tab="reservation-list">예약자 명단</button>
         <button class="tab-btn" data-tab="walkin-list">워크인 명단</button>
     </nav>
 
@@ -26,6 +30,20 @@
 
     <div id="team-management" class="tab-panel active">
         <div class="room-sections" id="roomSections"></div>
+    </div>
+
+    <div id="reservation-list" class="tab-panel">
+        <div class="reservation-list-container">
+            <div class="reservation-list-guide">네이버 예약에서 수신한 원본 이력입니다. 고객 취소 건도 목록에는 남고, 시간표 게임 카드에서는 자동으로 제거됩니다.</div>
+            <table class="reservation-table">
+                <thead>
+                    <tr>
+                        <th>상태</th><th>시간</th><th>방</th><th>팀명</th><th>성함</th><th>연락처</th><th>난이도</th><th>인원</th><th>상품</th><th>예약번호</th>
+                    </tr>
+                </thead>
+                <tbody id="reservationListBody"></tbody>
+            </table>
+        </div>
     </div>
 
     <div id="walkin-list" class="tab-panel">
