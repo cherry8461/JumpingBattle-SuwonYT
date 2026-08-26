@@ -172,24 +172,48 @@
             if (!response.ok) throw new Error('예약자 명단을 불러오지 못했습니다.');
             const items = await response.json();
             if (!Array.isArray(items) || items.length === 0) {
-                listBody.innerHTML = '<tr><td colspan="10" class="empty-row">예약 내역이 없습니다.</td></tr>';
+                listBody.innerHTML = '<tr><td colspan="11" class="empty-row">예약 내역이 없습니다.</td></tr>';
                 return;
             }
             listBody.innerHTML = items.map(item => {
                 const cancelled = item.status === 'CANCELED';
                 const statusClass = cancelled ? 'is-cancelled' : (item.status === 'COMPLETED' ? 'is-completed' : 'is-confirmed');
+                const canConvert = !cancelled && item.handling_mode !== 'onsite_payment';
+                const actionHtml = canConvert
+                    ? `<button class="onsite-payment-btn" data-booking-id="${escapeHtml(item.booking_id)}">현장 결제 전환</button>`
+                    : (item.handling_mode === 'onsite_payment' ? '<span class="onsite-payment-done">전환 완료</span>' : '-');
                 return `<tr class="${cancelled ? 'reservation-cancelled' : ''}">
                     <td><span class="reservation-status ${statusClass}">${escapeHtml(item.status_label)}</span></td>
                     <td>${escapeHtml(item.time)}</td><td><strong>${escapeHtml(item.room)}</strong></td>
                     <td><strong>${escapeHtml(item.team)}</strong></td><td>${escapeHtml(item.name)}</td>
                     <td>${escapeHtml(item.phone)}</td><td>${escapeHtml(item.difficulty)}</td>
                     <td>${escapeHtml(item.people || '-')}</td><td class="reservation-product">${escapeHtml(item.product)}</td>
-                    <td class="reservation-id">${escapeHtml(item.booking_id)}</td>
+                    <td class="reservation-id">${escapeHtml(item.booking_id)}</td><td>${actionHtml}</td>
                 </tr>`;
             }).join('');
+            listBody.querySelectorAll('.onsite-payment-btn').forEach(button => {
+                button.addEventListener('click', () => convertToOnsitePayment(button.dataset.bookingId));
+            });
         } catch (error) {
             console.error('예약자 명단 로드 실패:', error);
-            listBody.innerHTML = '<tr><td colspan="10" class="empty-row">예약자 명단을 불러오지 못했습니다.</td></tr>';
+            listBody.innerHTML = '<tr><td colspan="11" class="empty-row">예약자 명단을 불러오지 못했습니다.</td></tr>';
+        }
+    }
+
+    async function convertToOnsitePayment(bookingId) {
+        if (!bookingId) return;
+        const confirmed = window.confirm(
+            '현장 결제 전환으로 처리할까요?\n\n먼저 이 버튼을 누른 뒤 네이버에서 취소하면 게임 카드는 유지되고 당일취소에 집계되지 않습니다.'
+        );
+        if (!confirmed) return;
+        try {
+            const response = await fetch(`/api/naver-reservations/${encodeURIComponent(bookingId)}/onsite-payment`, { method: 'POST' });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.success === false) throw new Error(body.message || '처리에 실패했습니다.');
+            await loadReservationList();
+            alert('현장 결제 전환으로 저장되었습니다. 이제 네이버에서 취소 처리해도 게임 카드는 유지됩니다.');
+        } catch (error) {
+            alert(error.message || '처리에 실패했습니다.');
         }
     }
 

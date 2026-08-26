@@ -785,6 +785,14 @@ def init_db():
                 use_date TEXT NOT NULL,
                 counted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_booking_card_links (
+                booking_id TEXT PRIMARY KEY,
+                booking_row_id INTEGER,
+                handling_mode TEXT NOT NULL DEFAULT 'standard',
+                card_state TEXT NOT NULL DEFAULT 'active',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(booking_row_id) REFERENCES bookings(id))''')
+
     cur.execute('''CREATE TABLE IF NOT EXISTS db_maintenance_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_name TEXT NOT NULL,
@@ -808,6 +816,7 @@ def init_db():
     cur.execute('CREATE INDEX IF NOT EXISTS idx_command_queue_room_status ON command_queue(room_id, status, requested_at)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_command_history_command ON command_history(command_id, created_at)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_reservations_date_status ON naver_reservations(use_date, booking_status, use_time_key)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_booking_card_links_row ON naver_booking_card_links(booking_row_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_stock_rules_date ON naver_stock_rules(use_date, use_time_key)')
 
     cur.execute("PRAGMA table_info(queue_items)")
@@ -2255,6 +2264,17 @@ def add_booking():
                 )
             )
             new_id = cur.lastrowid
+            naver_booking_id = str(data.get('naver_booking_id', '')).strip()
+            if naver_booking_id:
+                cur.execute(
+                    '''INSERT INTO naver_booking_card_links (booking_id, booking_row_id, handling_mode, card_state)
+                       VALUES (?, ?, 'standard', 'active')
+                       ON CONFLICT(booking_id) DO UPDATE SET
+                           booking_row_id=excluded.booking_row_id,
+                           card_state='active',
+                           updated_at=CURRENT_TIMESTAMP''',
+                    (naver_booking_id[:100], new_id),
+                )
 
         # 🚀 [교정 3]: with 블록을 빠져나오면 자동으로 안전하게 Commit 완료됩니다!
         return jsonify({"status": "success", "id": new_id})
@@ -2338,7 +2358,17 @@ def get_booking_list():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT * FROM bookings WHERE booking_date=? ORDER BY time_key, room, COALESCE(order_no, 0), id", (target_date,))
+    cur.execute(
+        '''SELECT * FROM bookings
+             WHERE booking_date=?
+               AND NOT EXISTS (
+                   SELECT 1 FROM naver_booking_card_links AS link
+                    WHERE link.booking_row_id=bookings.id
+                      AND link.card_state='cancelled_hidden'
+               )
+             ORDER BY time_key, room, COALESCE(order_no, 0), id''',
+        (target_date,),
+    )
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return jsonify(rows)
@@ -2560,35 +2590,91 @@ def get_naver_reservation_list():
     with get_db_connection() as conn:
         rows = conn.execute(
             '''
-            SELECT booking_id, booking_status, use_time_key, room_name, product_name,
+            SELECT reservation.booking_id, reservation.booking_status, reservation.use_time_key, reservation.room_name, reservation.product_name,
                    customer_name, team_name, difficulty, phone, people_count,
-                   first_seen_at, updated_at, cancelled_at
-              FROM naver_reservations
-             WHERE use_date=?
-             ORDER BY use_time_key ASC, room_name ASC, first_seen_at ASC
+                   first_seen_at, reservation.updated_at, cancelled_at,
+                   COALESCE(link.handling_mode, 'standard') AS handling_mode
+              FROM naver_reservations AS reservation
+              LEFT JOIN naver_booking_card_links AS link ON link.booking_id=reservation.booking_id
+             WHERE reservation.use_date=?
+             ORDER BY reservation.use_time_key ASC, reservation.room_name ASC, reservation.first_seen_at ASC
             ''',
             (target_date,),
         ).fetchall()
 
     return jsonify([
         {
-            'booking_id': row['booking_id'],
-            'status': row['booking_status'],
-            'status_label': status_labels.get(row['booking_status'], row['booking_status']),
-            'time': str(row['use_time_key'] or '').replace('-', ':'),
-            'room': row['room_name'] or '-',
-            'product': row['product_name'] or '-',
-            'name': row['customer_name'] or '-',
-            'team': row['team_name'] or '-',
-            'difficulty': row['difficulty'] or '-',
-            'phone': row['phone'] or '-',
-            'people': '' if not row['people_count'] else row['people_count'],
-            'received_at': row['first_seen_at'] or '',
-            'updated_at': row['updated_at'] or '',
-            'cancelled_at': row['cancelled_at'] or '',
+            'booking_id': row[0],
+            'status': row[1],
+            'status_label': '현장 결제 전환' if row[13] == 'onsite_payment' else status_labels.get(row[1], row[1]),
+            'handling_mode': row[13],
+            'time': str(row[2] or '').replace('-', ':'),
+            'room': row[3] or '-',
+            'product': row[4] or '-',
+            'name': row[5] or '-',
+            'team': row[6] or '-',
+            'difficulty': row[7] or '-',
+            'phone': row[8] or '-',
+            'people': '' if not row[9] else row[9],
+            'received_at': row[10] or '',
+            'updated_at': row[11] or '',
+            'cancelled_at': row[12] or '',
         }
         for row in rows
     ])
+
+
+@web.route('/api/naver-reservations/<booking_id>/onsite-payment', methods=['POST'])
+@team_list_api_required
+def convert_naver_reservation_to_onsite_payment(booking_id):
+    booking_id = str(booking_id or '').strip()
+    if not booking_id or len(booking_id) > 100:
+        return jsonify({'success': False, 'message': '예약번호가 올바르지 않습니다.'}), 400
+
+    with get_db_connection() as conn:
+        reservation = conn.execute(
+            "SELECT booking_status FROM naver_reservations WHERE booking_id=?",
+            (booking_id,),
+        ).fetchone()
+        link = conn.execute(
+            "SELECT booking_row_id FROM naver_booking_card_links WHERE booking_id=?",
+            (booking_id,),
+        ).fetchone()
+        if not reservation:
+            return jsonify({'success': False, 'message': '예약 원본을 찾을 수 없습니다.'}), 404
+        if reservation[0] == 'CANCELED':
+            return jsonify({'success': False, 'message': '이미 취소된 예약입니다. 카드 복구 처리가 필요합니다.'}), 409
+        if not link or not link[0]:
+            return jsonify({'success': False, 'message': '시간표에 게임 카드가 등록된 뒤 전환할 수 있습니다.'}), 409
+
+        booking = conn.execute(
+            "SELECT payment_data FROM bookings WHERE id=?",
+            (link[0],),
+        ).fetchone()
+        if not booking:
+            return jsonify({'success': False, 'message': '연결된 게임 카드를 찾을 수 없습니다.'}), 409
+        try:
+            payment_data = json.loads(booking[0] or '{}')
+        except (TypeError, json.JSONDecodeError):
+            payment_data = {}
+        payment_data.update({
+            'isBooker': True,
+            'depositPaid': False,
+            'depositAmount': 0,
+            'onsitePayment': True,
+            'naverBookingId': booking_id,
+        })
+        conn.execute(
+            "UPDATE bookings SET payment_data=? WHERE id=?",
+            (json.dumps(payment_data, ensure_ascii=False), link[0]),
+        )
+        conn.execute(
+            '''UPDATE naver_booking_card_links
+                  SET handling_mode='onsite_payment', card_state='active', updated_at=CURRENT_TIMESTAMP
+                WHERE booking_id=?''',
+            (booking_id,),
+        )
+    return jsonify({'success': True, 'message': '현장 결제 전환으로 처리했습니다.'})
 
 @web.route('/api/naver-bookings/today-init', methods=['GET'])
 def get_today_init_bookings():

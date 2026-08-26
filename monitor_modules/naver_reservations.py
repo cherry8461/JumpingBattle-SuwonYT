@@ -73,12 +73,22 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     (*normalized["record"], now_text, now_text, normalized["cancelled_at"]),
                 )
 
+                handling_mode, dashboard_booking_id = get_card_link(cursor, normalized["booking_id"])
                 if normalized["is_cancelled"]:
-                    if register_cancellation(cursor, normalized["booking_id"], normalized["use_date"]):
-                        same_day_cancellations += 1
+                    if handling_mode != "onsite_payment":
+                        if register_cancellation(cursor, normalized["booking_id"], normalized["use_date"]):
+                            same_day_cancellations += 1
+                        if dashboard_booking_id:
+                            cursor.execute(
+                                "UPDATE naver_booking_card_links SET card_state='cancelled_hidden', updated_at=CURRENT_TIMESTAMP WHERE booking_id=?",
+                                (normalized["booking_id"],),
+                            )
                     cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
                 elif normalized["is_actionable"]:
                     restore_reversed_cancellation(cursor, normalized["booking_id"], normalized["use_date"])
+                    if handling_mode == "onsite_payment":
+                        accepted += 1
+                        continue
                     cursor.execute(
                         """
                         INSERT INTO naver_mail_cache
@@ -116,6 +126,17 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
         )
 
     return blueprint
+
+
+def get_card_link(cursor, booking_id: str) -> tuple[str, int | None]:
+    cursor.execute(
+        "SELECT handling_mode, booking_row_id FROM naver_booking_card_links WHERE booking_id=?",
+        (booking_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return "standard", None
+    return str(row[0] or "standard"), int(row[1]) if row[1] else None
 
 
 def normalize_item(item: object) -> dict | None:

@@ -107,3 +107,6 @@ th { background: #fcfcfc; color: #777; font-weight: bold; }
 .reservation-cancelled td:not(:first-child) { text-decoration: line-through; text-decoration-color: #d0d0d0; }
 .reservation-product { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reservation-id { color: #758195; font-family: monospace; font-size: 11px; }
+.onsite-payment-btn { padding: 6px 8px; border: 1px solid #d97706; border-radius: 6px; background: #fff7ed; color: #b45309; font-size: 11px; white-space: nowrap; }
+.onsite-payment-btn:hover { background: #ffedd5; }
+.onsite-payment-done { color: #b45309; font-size: 12px; font-weight: 700; white-space: nowrap; }

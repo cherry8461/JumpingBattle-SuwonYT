@@ -396,7 +396,8 @@ async function handleConfirmNaver(bookingId) {
                 isBooker: true,
                 depositPaid: true,
                 depositAmount: 5000,
-                reservationTime: rawTime
+                reservationTime: rawTime,
+                naverBookingId: bookingId
             };
             fakeCard.dataset.paymentData = JSON.stringify(customPaymentData);
 
@@ -495,7 +496,8 @@ async function handleConfirmNaver(bookingId) {
             isBooker: true,
             depositPaid: true,
             depositAmount: 5000,
-            reservationTime: rawTime // 💡 메일에서 가져온 실제 예약 시간("16:00" 등)이 자동으로 세팅됩니다.
+            reservationTime: rawTime,
+            naverBookingId: bookingId // 💡 메일에서 가져온 실제 예약 시간("16:00" 등)이 자동으로 세팅됩니다.
         };
 
         card.dataset.paymentData = JSON.stringify(customPaymentData);
@@ -5009,6 +5011,7 @@ async function saveCard(card) {
     booking.people = meta.people || '';
     booking.phone = card.dataset.phone || '';
     booking.roomFlagLabel = currentRoomFlag || '-';
+    booking.naver_booking_id = parsedPaymentData?.naverBookingId || '';
     
     try {
         let res;
