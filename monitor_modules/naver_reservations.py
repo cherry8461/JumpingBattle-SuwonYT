@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import threading
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -13,7 +14,165 @@ from flask import Blueprint, jsonify, request
 from monitor_core.database import get_db_connection
 
 
+_stock_event_condition = threading.Condition()
+_stock_event_revision = 0
+
+
+def notify_stock_plan_changed() -> None:
+    """Wake the local Chrome extension when dashboard cards change."""
+    global _stock_event_revision
+    with _stock_event_condition:
+        _stock_event_revision += 1
+        _stock_event_condition.notify_all()
+
+
 ROOM_PATTERN = re.compile(r"\b(C1|C2|B1|B2)\b", re.IGNORECASE)
+
+
+def normalize_time_key(value: object) -> str:
+    """Convert dashboard and Naver time formats to HH-MM."""
+    parts = re.findall(r"\d+", str(value or ""))
+    if len(parts) < 2:
+        return ""
+    hour, minute = (int(parts[0]), int(parts[1]))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return ""
+    return f"{hour:02d}-{minute:02d}"
+
+
+def record_dashboard_time_change(cursor, booking_row_id: int, booking_date: object, time_key: object, room: object) -> None:
+    """Persist a phone-requested time change for a Naver-originated card.
+
+    Same-time room reassignment is deliberately ignored: the original Naver
+    reservation already owns one interchangeable physical room. Only a time
+    change creates a stock compensation rule.
+    """
+    cursor.execute(
+        """
+        SELECT link.booking_id, link.card_state,
+               reservation.use_date, reservation.use_time_key, reservation.room_name,
+               reservation.cancelled_at
+          FROM naver_booking_card_links AS link
+          LEFT JOIN naver_reservations AS reservation ON reservation.booking_id=link.booking_id
+         WHERE link.booking_row_id=?
+        """,
+        (booking_row_id,),
+    )
+    linked = cursor.fetchone()
+    if not linked or not linked[0] or linked[1] == "cancelled_hidden" or linked[5]:
+        return
+    original_date = str(linked[2] or "")
+    original_time = normalize_time_key(linked[3])
+    original_room_match = ROOM_PATTERN.search(str(linked[4] or ""))
+    operational_date = str(booking_date or "")
+    operational_time = normalize_time_key(time_key)
+    operational_room_match = ROOM_PATTERN.search(str(room or ""))
+    if not (original_date and original_time and original_room_match and operational_date and operational_time and operational_room_match):
+        return
+    booking_id = str(linked[0])
+    # Physical room reassignment within the same time does not affect Naver.
+    if original_date == operational_date and original_time == operational_time:
+        cursor.execute("DELETE FROM naver_time_overrides WHERE booking_id=?", (booking_id,))
+        return
+    cursor.execute(
+        """
+        INSERT INTO naver_time_overrides (
+            booking_id, booking_row_id,
+            source_date, source_time_key, source_room,
+            operation_date, operation_time_key, operation_room,
+            state, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)
+        ON CONFLICT(booking_id) DO UPDATE SET
+            booking_row_id=excluded.booking_row_id,
+            source_date=excluded.source_date,
+            source_time_key=excluded.source_time_key,
+            source_room=excluded.source_room,
+            operation_date=excluded.operation_date,
+            operation_time_key=excluded.operation_time_key,
+            operation_room=excluded.operation_room,
+            state='active',
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (
+            booking_id, booking_row_id,
+            original_date, original_time, original_room_match.group(1).upper(),
+            operational_date, operational_time, operational_room_match.group(1).upper(),
+        ),
+    )
+
+
+def clear_dashboard_time_change(cursor, booking_row_id: int) -> None:
+    """Remove a stock compensation rule when its dashboard card is deleted."""
+    cursor.execute("DELETE FROM naver_time_overrides WHERE booking_row_id=?", (booking_row_id,))
+
+
+def ensure_naver_dashboard_card(cursor, normalized: dict) -> tuple[int | None, bool]:
+    """Create one timetable card for an actionable Naver game-room booking.
+
+    The old waiting-list confirmation flow is retained for non-game products,
+    while C1/C2/B1/B2 reservations are placed on the timetable immediately.
+    """
+    room = str(normalized.get("room_name") or "").upper()
+    if room not in {"C1", "C2", "B1", "B2"}:
+        return None, False
+    booking_id = str(normalized["booking_id"])
+    cursor.execute(
+        "SELECT booking_row_id FROM naver_booking_card_links WHERE booking_id=?",
+        (booking_id,),
+    )
+    existing = cursor.fetchone()
+    if existing and existing[0]:
+        cursor.execute(
+            "UPDATE naver_booking_card_links SET card_state='active', updated_at=CURRENT_TIMESTAMP WHERE booking_id=?",
+            (booking_id,),
+        )
+        return int(existing[0]), False
+
+    cursor.execute(
+        "SELECT COALESCE(MAX(order_no), 0) FROM bookings WHERE booking_date=? AND time_key=? AND room=?",
+        (normalized["use_date"], normalized["use_time_key"], room),
+    )
+    order_no = int(cursor.fetchone()[0] or 0) + 1
+    payment_data = json.dumps(
+        {
+            "totalPeople": "",
+            "roomFlags": {"F": False, "S": room.startswith("C"), "M": room.startswith("B"), "L": False},
+            "roomFlagLabel": "소" if room.startswith("C") else "중",
+            "isBooker": True,
+            "depositPaid": True,
+            "depositAmount": 5000,
+            "reservationTime": normalized["use_time_key"].replace("-", ":"),
+            "naverBookingId": booking_id,
+        },
+        ensure_ascii=False,
+    )
+    cursor.execute(
+        """
+        INSERT INTO bookings (
+            booking_date, time_key, room, name, phone, team, level, people,
+            order_no, paid, completed, payment_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, 0, 0, ?)
+        """,
+        (
+            normalized["use_date"], normalized["use_time_key"], room,
+            normalized.get("customer_name", ""), normalized.get("phone", ""),
+            str(normalized.get("team_name", ""))[:10], normalized.get("difficulty", ""),
+            order_no, payment_data,
+        ),
+    )
+    booking_row_id = int(cursor.lastrowid)
+    cursor.execute(
+        """
+        INSERT INTO naver_booking_card_links (booking_id, booking_row_id, handling_mode, card_state)
+        VALUES (?, ?, 'standard', 'active')
+        ON CONFLICT(booking_id) DO UPDATE SET
+            booking_row_id=excluded.booking_row_id,
+            card_state='active',
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (booking_id, booking_row_id),
+    )
+    return booking_row_id, True
 DATE_PATTERN = re.compile(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})")
 TIME_PATTERN = re.compile(r"(?:오전|오후|AM|PM)?\s*(\d{1,2}):(\d{2})", re.IGNORECASE)
 
@@ -38,6 +197,7 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
         accepted = 0
         ignored = 0
         same_day_cancellations = 0
+        cards_created = 0
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db_connection() as connection:
             cursor = connection.cursor()
@@ -81,6 +241,9 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     or is_linked_card_marked_for_onsite_payment(cursor, dashboard_booking_id)
                 )
                 if normalized["is_cancelled"]:
+                    # A customer cancellation ends any phone-requested time
+                    # change. The extension will release its moved-to slot.
+                    cursor.execute("DELETE FROM naver_time_overrides WHERE booking_id=?", (normalized["booking_id"],))
                     if not keep_card_for_onsite_payment:
                         if register_cancellation(cursor, normalized["booking_id"], normalized["use_date"]):
                             same_day_cancellations += 1
@@ -95,20 +258,23 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     if keep_card_for_onsite_payment:
                         accepted += 1
                         continue
+                    _, created = ensure_naver_dashboard_card(cursor, normalized)
+                    cards_created += int(created)
+                    # Game-room reservations are now placed immediately on
+                    # the timetable, so they must not wait in the walk-in box.
+                    # Non-game products retain the existing manual workflow.
+                    cache_status = 'CONFIRMED' if normalized["room_name"] in {"C1", "C2", "B1", "B2"} else 'INIT'
                     cursor.execute(
                         """
                         INSERT INTO naver_mail_cache
                             (booking_id, masked_name, use_date, use_time_key, room_name, status)
-                        VALUES (?, ?, ?, ?, ?, 'INIT')
+                        VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT(booking_id) DO UPDATE SET
                             masked_name=excluded.masked_name,
                             use_date=excluded.use_date,
                             use_time_key=excluded.use_time_key,
                             room_name=excluded.room_name,
-                            status=CASE
-                                WHEN naver_mail_cache.status='CONFIRMED' THEN 'CONFIRMED'
-                                ELSE 'INIT'
-                            END
+                            status=excluded.status
                         """,
                         (
                             normalized["booking_id"],
@@ -116,28 +282,34 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                             normalized["use_date"],
                             normalized["use_time_key"],
                             normalized["room_name"],
+                            cache_status,
                         ),
                     )
                 accepted += 1
 
         socketio.emit(
             "naver_reservations_synced",
-            {"accepted": accepted, "ignored": ignored, "same_day_cancellations": same_day_cancellations},
+            {"accepted": accepted, "ignored": ignored, "same_day_cancellations": same_day_cancellations, "cards_created": cards_created},
         )
+        # A new Naver booking can change a source-slot compensation from 1 to
+        # 2 (or more), so wake the stock reconciliation immediately.
+        notify_stock_plan_changed()
         return jsonify(
             success=True,
             accepted=accepted,
             ignored=ignored,
             same_day_cancellations=same_day_cancellations,
+            cards_created=cards_created,
         )
 
     @blueprint.get("/api/integrations/naver/stock-plan")
     def get_stock_plan():
-        """Return local, non-Naver cards that must close Naver availability.
+        """Return local cards that must close Naver availability.
 
-        Naver-originated cards are excluded: Naver already owns their stock.
-        This endpoint only supplies a plan; the logged-in Chrome extension is
-        the sole component that can change Naver availability.
+        Naver-originated cards stay excluded. Staff may move such a card
+        between equivalent physical rooms on the dashboard, while Naver keeps
+        owning its original reservation slot. The Chrome extension is the
+        sole writer for locally created cards.
         """
         expected_token = os.getenv("NAVER_AGENT_TOKEN", "")
         provided_token = request.headers.get("x-jumping-agent-token", "")
@@ -175,8 +347,83 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                 "room": row[2],
                 "date": row[0],
                 "time": f"{hour:02d}:{minute:02d}",
+                "stock": 0,
+                "kind": "local_card",
             })
-        return jsonify(success=True, slots=slots)
+        # Time changes made by phone leave the original Naver reservation in
+        # place. For each source slot, increase Naver's stock enough to offset
+        # only the reservations that are now operated at another time.
+        with get_db_connection() as connection:
+            override_rows = connection.execute(
+                """
+                SELECT override.booking_id,
+                       override.source_date, override.source_time_key, override.source_room,
+                       override.operation_date, override.operation_time_key, override.operation_room
+                  FROM naver_time_overrides AS override
+                  JOIN naver_reservations AS source ON source.booking_id=override.booking_id
+                 WHERE override.state='active'
+                   AND source.cancelled_at IS NULL
+                   AND override.source_date >= ?
+                   AND override.source_date <= date(?, '+14 days')
+                """,
+                (today, today),
+            ).fetchall()
+            source_groups: dict[tuple[str, str, str], list[object]] = {}
+            for override in override_rows:
+                source_key = (str(override[1]), str(override[2]), str(override[3]).upper())
+                source_groups.setdefault(source_key, []).append(override)
+                operation_time = normalize_time_key(override[5])
+                operation_room_match = ROOM_PATTERN.search(str(override[6] or ""))
+                if operation_time and operation_room_match:
+                    slots.append({
+                        "room": operation_room_match.group(1).upper(),
+                        "date": str(override[4]),
+                        "time": operation_time.replace("-", ":"),
+                        "stock": 0,
+                        "kind": "time_change_target",
+                    })
+            adjustments = []
+            for (source_date, source_time, source_room), grouped_overrides in source_groups.items():
+                active_count = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                      FROM naver_reservations
+                     WHERE use_date=?
+                       AND use_time_key=?
+                       AND UPPER(room_name)=?
+                       AND cancelled_at IS NULL
+                       AND booking_status <> 'CANCELED'
+                    """,
+                    (source_date, source_time, source_room),
+                ).fetchone()[0]
+                # Example: original A is moved (1 active, 1 moved) -> stock 1.
+                # A plus new B at the old time (2 active, 1 moved) -> stock 2.
+                adjusted_stock = max(1, int(active_count) - len(grouped_overrides) + 1)
+                adjustments.append({
+                    "room": source_room,
+                    "date": source_date,
+                    "time": source_time.replace("-", ":"),
+                    "stock": adjusted_stock,
+                    "kind": "time_change_source",
+                    "movedBookingCount": len(grouped_overrides),
+                    "activeBookingCount": int(active_count),
+                })
+        return jsonify(success=True, slots=slots, adjustments=adjustments)
+
+    @blueprint.get("/api/integrations/naver/stock-events")
+    def wait_for_stock_event():
+        expected_token = os.getenv("NAVER_AGENT_TOKEN", "")
+        provided_token = request.headers.get("x-jumping-agent-token", "")
+        if not expected_token or not hmac.compare_digest(provided_token, expected_token):
+            return jsonify(success=False, message="Unauthorized agent"), 401
+        try:
+            after = max(int(request.args.get("after", "0")), 0)
+        except ValueError:
+            after = 0
+        with _stock_event_condition:
+            if _stock_event_revision <= after:
+                _stock_event_condition.wait(timeout=20)
+            return jsonify(success=True, revision=_stock_event_revision, changed=_stock_event_revision > after)
 
     return blueprint
 
@@ -249,6 +496,10 @@ def normalize_item(item: object) -> dict | None:
         "use_time_key": use_time_key,
         "room_name": room_name,
         "customer_name": customer_name,
+        "team_name": team_name,
+        "difficulty": difficulty,
+        "phone": phone,
+        "people_count": people_count,
         "is_cancelled": is_cancelled,
         "is_actionable": status in {"CONFIRMED", "COMPLETED"},
         "cancelled_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S") if is_cancelled else None,

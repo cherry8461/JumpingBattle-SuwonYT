@@ -36,7 +36,12 @@ from monitor_core.settings import (
     SERVER_LOG_DIR,
     SERVER_PORT,
 )
-from monitor_modules.naver_reservations import create_naver_reservations_blueprint
+from monitor_modules.naver_reservations import (
+    clear_dashboard_time_change,
+    create_naver_reservations_blueprint,
+    notify_stock_plan_changed,
+    record_dashboard_time_change,
+)
 
 # ========================================================
 # Flask
@@ -793,6 +798,24 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(booking_row_id) REFERENCES bookings(id))''')
 
+    # A phone-requested time change keeps the Naver booking at its original
+    # time, but the operation board uses a new time. This table records the
+    # stock compensation required for that original Naver slot.
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_time_overrides (
+                booking_id TEXT PRIMARY KEY,
+                booking_row_id INTEGER NOT NULL,
+                source_date TEXT NOT NULL,
+                source_time_key TEXT NOT NULL,
+                source_room TEXT NOT NULL,
+                operation_date TEXT NOT NULL,
+                operation_time_key TEXT NOT NULL,
+                operation_room TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(booking_id) REFERENCES naver_reservations(booking_id),
+                FOREIGN KEY(booking_row_id) REFERENCES bookings(id))''')
+
     cur.execute('''CREATE TABLE IF NOT EXISTS db_maintenance_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_name TEXT NOT NULL,
@@ -817,6 +840,7 @@ def init_db():
     cur.execute('CREATE INDEX IF NOT EXISTS idx_command_history_command ON command_history(command_id, created_at)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_reservations_date_status ON naver_reservations(use_date, booking_status, use_time_key)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_booking_card_links_row ON naver_booking_card_links(booking_row_id)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_time_overrides_source ON naver_time_overrides(source_date, source_time_key, source_room, state)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_stock_rules_date ON naver_stock_rules(use_date, use_time_key)')
 
     cur.execute("PRAGMA table_info(queue_items)")
@@ -2277,6 +2301,7 @@ def add_booking():
                 )
 
         # 🚀 [교정 3]: with 블록을 빠져나오면 자동으로 안전하게 Commit 완료됩니다!
+        notify_stock_plan_changed()
         return jsonify({"status": "success", "id": new_id})
 
     except Exception as e:
@@ -2316,6 +2341,7 @@ def update_booking(bid):
                 data.get('paid', 0), data.get('completed', 0), data.get('payment_data', None), bid
             )
         )
+        record_dashboard_time_change(cur, bid, booking_date, data.get('time_key'), data.get('room'))
         return jsonify({"success": True, "message": "수정 완료"})
         
     except Exception as e:
@@ -2323,6 +2349,7 @@ def update_booking(bid):
         return jsonify({"success": False, "error": str(e)})
         
     finally:
+        notify_stock_plan_changed()
         cur.close()
         conn.close()
     
@@ -2336,6 +2363,7 @@ def delete_booking(bid):
     try:
         # 🎯 [교정 2]: with conn 보호막을 씌워 데이터 삭제 즉시 자동으로 Commit 하고 잠금을 풀게 합니다.
         with conn:
+            clear_dashboard_time_change(cur, bid)
             cur.execute('DELETE FROM bookings WHERE id=?', (bid,))
             
         # 🚀 디비에서 완전히 증발한 것을 확인한 뒤 프론트엔드에 성공 리턴
@@ -2347,6 +2375,7 @@ def delete_booking(bid):
         return jsonify({"status": "error", "message": str(e)}), 500
         
     finally:
+        notify_stock_plan_changed()
         # 🔒 어떤 예외 상황이 오든 자원은 무조건 정갈하게 반납!
         cur.close()
         conn.close()
