@@ -7,6 +7,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -16,14 +17,32 @@ from monitor_core.database import get_db_connection
 
 _stock_event_condition = threading.Condition()
 _stock_event_revision = 0
+_stock_event_emitted_at = 0
+_email_hint_condition = threading.Condition()
+_email_hint_revision = 0
 
 
 def notify_stock_plan_changed() -> None:
     """Wake the local Chrome extension when dashboard cards change."""
-    global _stock_event_revision
+    global _stock_event_revision, _stock_event_emitted_at
     with _stock_event_condition:
         _stock_event_revision += 1
+        _stock_event_emitted_at = int(time.time() * 1000)
+        print(f"[Naver stock] dashboard event emitted revision={_stock_event_revision}")
         _stock_event_condition.notify_all()
+
+
+def notify_email_hint_received() -> None:
+    """Wake the local extension as soon as a Naver reservation email arrives.
+
+    The email is only an early signal: final data always comes from the
+    authenticated Naver reservation page, so a mail and page result can never
+    create two dashboard cards.
+    """
+    global _email_hint_revision
+    with _email_hint_condition:
+        _email_hint_revision += 1
+        _email_hint_condition.notify_all()
 
 
 ROOM_PATTERN = re.compile(r"\b(C1|C2|B1|B2)\b", re.IGNORECASE)
@@ -38,6 +57,15 @@ def normalize_time_key(value: object) -> str:
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         return ""
     return f"{hour:02d}-{minute:02d}"
+
+
+def dashboard_time_key(value: object) -> str:
+    """Match the timetable cell key: 17:00 is stored as 17-0."""
+    normalized = normalize_time_key(value)
+    if not normalized:
+        return ""
+    hour, minute = normalized.split("-", 1)
+    return f"{int(hour)}-{int(minute)}"
 
 
 def record_dashboard_time_change(cursor, booking_row_id: int, booking_date: object, time_key: object, room: object) -> None:
@@ -116,6 +144,9 @@ def ensure_naver_dashboard_card(cursor, normalized: dict) -> tuple[int | None, b
     if room not in {"C1", "C2", "B1", "B2"}:
         return None, False
     booking_id = str(normalized["booking_id"])
+    timeline_time = dashboard_time_key(normalized["use_time_key"])
+    if not timeline_time:
+        return None, False
     cursor.execute(
         "SELECT booking_row_id FROM naver_booking_card_links WHERE booking_id=?",
         (booking_id,),
@@ -130,7 +161,7 @@ def ensure_naver_dashboard_card(cursor, normalized: dict) -> tuple[int | None, b
 
     cursor.execute(
         "SELECT COALESCE(MAX(order_no), 0) FROM bookings WHERE booking_date=? AND time_key=? AND room=?",
-        (normalized["use_date"], normalized["use_time_key"], room),
+        (normalized["use_date"], timeline_time, room),
     )
     order_no = int(cursor.fetchone()[0] or 0) + 1
     payment_data = json.dumps(
@@ -154,7 +185,7 @@ def ensure_naver_dashboard_card(cursor, normalized: dict) -> tuple[int | None, b
         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, 0, 0, ?)
         """,
         (
-            normalized["use_date"], normalized["use_time_key"], room,
+            normalized["use_date"], timeline_time, room,
             normalized.get("customer_name", ""), normalized.get("phone", ""),
             str(normalized.get("team_name", ""))[:10], normalized.get("difficulty", ""),
             order_no, payment_data,
@@ -320,16 +351,18 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
         with get_db_connection() as connection:
             rows = connection.execute(
                 """
-                SELECT booking_date, time_key, room
+                SELECT booking.booking_date, booking.time_key, booking.room
                   FROM bookings AS booking
                   LEFT JOIN naver_booking_card_links AS link ON link.booking_row_id=booking.id
+                  LEFT JOIN naver_manual_stock_blocks AS manual ON manual.booking_row_id=booking.id
                  WHERE booking_date >= ?
                    AND booking_date <= date(?, '+14 days')
                    AND COALESCE(booking.completed, 0)=0
                    AND UPPER(TRIM(booking.room)) IN ('C1', 'C2', 'B1', 'B2')
                    AND link.booking_id IS NULL
-                 GROUP BY booking_date, time_key, room
-                 ORDER BY booking_date, time_key, room
+                   AND manual.booking_row_id IS NULL
+                 GROUP BY booking.booking_date, booking.time_key, booking.room
+                 ORDER BY booking.booking_date, booking.time_key, booking.room
                 """,
                 (today, today),
             ).fetchall()
@@ -410,6 +443,79 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                 })
         return jsonify(success=True, slots=slots, adjustments=adjustments)
 
+    @blueprint.post("/api/integrations/naver/manual-stock")
+    def receive_manual_stock_changes():
+        """Reflect staff-made Naver stock changes as grey local cards."""
+        expected_token = os.getenv("NAVER_AGENT_TOKEN", "")
+        provided_token = request.headers.get("x-jumping-agent-token", "")
+        if not expected_token or not hmac.compare_digest(provided_token, expected_token):
+            return jsonify(success=False, message="Unauthorized agent"), 401
+        body = request.get_json(silent=True) or {}
+        items = body.get("items")
+        if not isinstance(items, list) or len(items) > 30:
+            return jsonify(success=False, message="items must be a list of up to 30 changes"), 400
+
+        applied = 0
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                room_match = ROOM_PATTERN.search(str(item.get("room") or ""))
+                use_date = str(item.get("date") or "")
+                use_time_key = normalize_time_key(item.get("time"))
+                if not room_match or not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", use_date) or not use_time_key:
+                    continue
+                room = room_match.group(1).upper()
+                timeline_time = dashboard_time_key(use_time_key)
+                if item.get("blocked"):
+                    existing = cursor.execute(
+                        "SELECT booking_row_id FROM naver_manual_stock_blocks WHERE room=? AND use_date=? AND use_time_key=?",
+                        (room, use_date, use_time_key),
+                    ).fetchone()
+                    if existing:
+                        continue
+                    occupied = cursor.execute(
+                        "SELECT 1 FROM bookings WHERE booking_date=? AND time_key=? AND room=? LIMIT 1",
+                        (use_date, timeline_time, room),
+                    ).fetchone()
+                    if occupied:
+                        # A real card already explains the occupied slot.
+                        continue
+                    order_no = int(cursor.execute(
+                        "SELECT COALESCE(MAX(order_no), 0) + 1 FROM bookings WHERE booking_date=? AND time_key=? AND room=?",
+                        (use_date, timeline_time, room),
+                    ).fetchone()[0] or 1)
+                    payment_data = json.dumps({"naverManualBlock": True, "naverStock": 0}, ensure_ascii=False)
+                    cursor.execute(
+                        """INSERT INTO bookings
+                           (booking_date, time_key, room, name, phone, team, level, people, order_no, paid, completed, payment_data)
+                           VALUES (?, ?, ?, '', '', '네이버 수동 마감', '', '', ?, 0, 0, ?)""",
+                        (use_date, timeline_time, room, order_no, payment_data),
+                    )
+                    cursor.execute(
+                        "INSERT INTO naver_manual_stock_blocks (room, use_date, use_time_key, booking_row_id) VALUES (?, ?, ?, ?)",
+                        (room, use_date, use_time_key, int(cursor.lastrowid)),
+                    )
+                    applied += 1
+                else:
+                    linked = cursor.execute(
+                        "SELECT booking_row_id FROM naver_manual_stock_blocks WHERE room=? AND use_date=? AND use_time_key=?",
+                        (room, use_date, use_time_key),
+                    ).fetchone()
+                    if not linked:
+                        continue
+                    if linked[0]:
+                        cursor.execute("DELETE FROM bookings WHERE id=?", (linked[0],))
+                    cursor.execute(
+                        "DELETE FROM naver_manual_stock_blocks WHERE room=? AND use_date=? AND use_time_key=?",
+                        (room, use_date, use_time_key),
+                    )
+                    applied += 1
+        if applied:
+            socketio.emit("naver_manual_stock_updated", {"applied": applied})
+        return jsonify(success=True, applied=applied)
+
     @blueprint.get("/api/integrations/naver/stock-events")
     def wait_for_stock_event():
         expected_token = os.getenv("NAVER_AGENT_TOKEN", "")
@@ -423,7 +529,28 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
         with _stock_event_condition:
             if _stock_event_revision <= after:
                 _stock_event_condition.wait(timeout=20)
-            return jsonify(success=True, revision=_stock_event_revision, changed=_stock_event_revision > after)
+            return jsonify(
+                success=True,
+                revision=_stock_event_revision,
+                changed=_stock_event_revision > after,
+                emittedAt=_stock_event_emitted_at,
+            )
+
+    @blueprint.get("/api/integrations/naver/email-events")
+    def wait_for_email_hint_event():
+        """Long-poll endpoint for mail-first Naver detail collection."""
+        expected_token = os.getenv("NAVER_AGENT_TOKEN", "")
+        provided_token = request.headers.get("x-jumping-agent-token", "")
+        if not expected_token or not hmac.compare_digest(provided_token, expected_token):
+            return jsonify(success=False, message="Unauthorized agent"), 401
+        try:
+            after = max(int(request.args.get("after", "0")), 0)
+        except ValueError:
+            after = 0
+        with _email_hint_condition:
+            if _email_hint_revision <= after:
+                _email_hint_condition.wait(timeout=20)
+            return jsonify(success=True, revision=_email_hint_revision, changed=_email_hint_revision > after)
 
     return blueprint
 

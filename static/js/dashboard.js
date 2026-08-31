@@ -17,6 +17,9 @@ window.addEventListener('DOMContentLoaded', () => {
             refreshWalkInList();
             if (typeof loadBookings === 'function') loadBookings();
         });
+        socket.on('naver_manual_stock_updated', () => {
+            if (typeof loadBookings === 'function') loadBookings();
+        });
         socket.on('room_or_queue_changed', () => {
             // 방 상태/대기리스트 변경 시 전체 갱신
             refreshRoomAndQueue();
@@ -4767,8 +4770,13 @@ function addCard(cell, bookingData, bid = 0, isPast = false) {
 function updateCard(card, b) {
     const view = card.querySelector('.cell-view');
     const isViewAll = document.body.classList.contains('view-all-mode');
+    const pDataRaw = b.payment_data || card.dataset.paymentData;
+    const parsed = parsePaymentDataSafe(pDataRaw);
+    const isManualNaverBlock = parsed?.naverManualBlock === true;
+    card.classList.toggle('naver-manual-block-card', isManualNaverBlock);
+    card.dataset.manualNaverBlock = isManualNaverBlock ? 'true' : 'false';
 
-    view.querySelector('.p-team-text').textContent = b.team || '';
+    view.querySelector('.p-team-text').textContent = isManualNaverBlock ? '네이버 수동 마감' : (b.team || '');
     view.querySelector('.p-name-text').textContent = b.name || '';
     const level = b.level || '';
     const people = b.people || '';
@@ -4777,8 +4785,6 @@ function updateCard(card, b) {
         card.dataset.phone = b.phone;
     }
     let roomFlagLabel = '-';
-    const pDataRaw = b.payment_data || card.dataset.paymentData;
-    const parsed = parsePaymentDataSafe(pDataRaw);
     // 1. 우선 b 객체에 직접 값이 있는지 확인
     if (b.roomFlagLabel && b.roomFlagLabel !== '-') {
         roomFlagLabel = b.roomFlagLabel;
@@ -4797,7 +4803,7 @@ function updateCard(card, b) {
     }
     // ------------------------------------------
 
-    const parsedPaymentData = parsePaymentDataSafe(b.payment_data || card.dataset.paymentData);
+    const parsedPaymentData = parsed;
     card.querySelector('.p-paid').checked = !!b.paid;
     card.querySelector('.p-completed').checked = !!b.completed;
     
@@ -5292,9 +5298,12 @@ async function loadBookings() {
         const data = await res.json();
 
         data.forEach(b => {
-            let effectiveTimeKey = b.time_key;
+            const timeParts = String(b.time_key || '').split('-');
+            let effectiveTimeKey = timeParts.length >= 2
+                ? `${parseInt(timeParts[0], 10)}-${parseInt(timeParts[1], 10)}`
+                : b.time_key;
             if (isViewAll) {
-                const hour = b.time_key.split('-')[0];
+                const hour = String(effectiveTimeKey).split('-')[0];
                 effectiveTimeKey = `${hour}-0`; 
             }
 

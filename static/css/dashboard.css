@@ -1717,6 +1717,24 @@
             pointer-events: none; /* 클릭 자체를 원천 차단 (가장 확실한 방법) */
         }
 
+        .booking-card.naver-manual-block-card .cell-view {
+            background: #e5e7eb !important;
+            border-left-color: #9ca3af !important;
+            color: #6b7280;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        .booking-card.naver-manual-block-card .p-team-text {
+            color: #6b7280 !important;
+            font-weight: 700;
+        }
+        .booking-card.naver-manual-block-card .p-name-text,
+        .booking-card.naver-manual-block-card .p-level-people-text,
+        .booking-card.naver-manual-block-card .p-payment-text,
+        .booking-card.naver-manual-block-card .team-card-badge-wrap {
+            display: none !important;
+        }
+
         .team-card-copy-badge {
             position: absolute;
             top: -7px;

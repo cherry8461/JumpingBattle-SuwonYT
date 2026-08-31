@@ -10,11 +10,14 @@ const STOCK_ALARM_NAME = "suwonyeongtong-naver-stock-poll";
 const DELIVERY_STATE_KEY = "delivery-state";
 const STOCK_STATE_KEY = "naver-stock-closed-by-extension";
 const NAVER_WRITE_AUTH_KEY = "naver-write-auth";
+const EXPECTED_STOCK_WRITE_KEY = "expected-extension-stock-writes";
 const KST_TIME_ZONE = "Asia/Seoul";
-const EXTENSION_BUILD = "suwonyt-time-change-stock-20260827-01";
+const EXTENSION_BUILD = "suwonyt-mail-first-sync-20260831-01";
 let roomItemIdsCache = null;
 let roomItemIdsCacheAt = 0;
 let stockEventWatcherRunning = false;
+let emailHintWatcherRunning = false;
+let stockSyncInFlight = null;
 
 function requireConfig() {
   if (!Number.isFinite(Number(CONFIG.businessId)) || !String(CONFIG.endpoint || "").startsWith("http")) {
@@ -257,10 +260,12 @@ async function getNaverCsrfToken() {
 }
 
 async function patchNaverStock(roomItemId, slot, writeAuth, stock = 0) {
+  const startedAt = performance.now();
   const url = `https://api-partner.booking.naver.com/v3.1/businesses/${CONFIG.businessId}/biz-items/${roomItemId}/schedules`;
   const [tab] = await chrome.tabs.query({ url: "https://partner.booking.naver.com/*" });
   if (!tab?.id) throw new Error("Open the Naver booking calendar in Chrome before stock sync.");
   const payload = { startTime: slot.time, startDate: slot.date, endDate: slot.date, status: "ON", stock };
+  markExpectedStockWrite(payload);
   console.info("[SuwonYT Naver] stock patch request", { roomItemId, payload });
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -281,7 +286,61 @@ async function patchNaverStock(roomItemId, slot, writeAuth, stock = 0) {
       return { ok: response.ok, status: response.status, text: (await response.text()).slice(0, 160) };
     }
   });
+  const elapsedMs = Math.round(performance.now() - startedAt);
   if (!result?.ok) throw new Error(`Naver stock PATCH HTTP ${result?.status || "failed"}: ${result?.text || "no response"}`);
+  console.info("[SuwonYT Naver] stock patch completed", { roomItemId, slot, stock, elapsedMs });
+}
+
+function stockWriteFingerprint(payload) {
+  return [payload?.startDate, payload?.endDate || payload?.startDate, payload?.startTime, Number(payload?.stock)].join("|");
+}
+
+function markExpectedStockWrite(payload) {
+  const key = stockWriteFingerprint(payload);
+  globalThis[EXPECTED_STOCK_WRITE_KEY] ||= new Map();
+  globalThis[EXPECTED_STOCK_WRITE_KEY].set(key, Date.now() + 15000);
+}
+
+function consumeExpectedStockWrite(payload) {
+  const writes = globalThis[EXPECTED_STOCK_WRITE_KEY];
+  if (!writes) return false;
+  const now = Date.now();
+  for (const [key, expiresAt] of writes.entries()) if (expiresAt <= now) writes.delete(key);
+  const key = stockWriteFingerprint(payload);
+  if (!writes.has(key)) return false;
+  writes.delete(key);
+  return true;
+}
+
+function requestPayload(details) {
+  const raw = details.requestBody?.raw?.[0]?.bytes;
+  if (!raw) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(raw));
+  } catch {
+    return null;
+  }
+}
+
+async function reportManualStockChange(details, payload) {
+  if (!payload || consumeExpectedStockWrite(payload)) return;
+  const itemMatch = String(details.url || "").match(/biz-items\/(\d+)\/schedules/);
+  if (!itemMatch) return;
+  const roomItemIds = await discoverRoomItemIds();
+  const room = Object.entries(roomItemIds).find(([, itemId]) => Number(itemId) === Number(itemMatch[1]))?.[0];
+  const date = String(payload.startDate || "");
+  const time = String(payload.startTime || "");
+  const stock = Number(payload.stock);
+  if (!room || !/^20\d{2}-\d{2}-\d{2}$/.test(date) || !/^\d{1,2}:\d{2}$/.test(time) || !Number.isFinite(stock)) return;
+  const endpoint = CONFIG.manualStockEndpoint || String(CONFIG.endpoint || "").replace("/reservations", "/manual-stock");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-jumping-agent-token": CONFIG.agentToken },
+    body: JSON.stringify({ items: [{ room, date, time, blocked: stock <= 0 }] })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.success === false) throw new Error(body.message || `manual stock HTTP ${response.status}`);
+  console.info("[SuwonYT Naver] manual stock reflected", { room, date, time, blocked: stock <= 0, applied: body.applied });
 }
 
 function getSlotAvailability(item, date, time) {
@@ -325,6 +384,20 @@ async function fetchAvailabilityByItem() {
 }
 
 async function syncLocalStockToNaver() {
+  if (stockSyncInFlight) {
+    console.info("[SuwonYT Naver] stock reconciliation already running");
+    return stockSyncInFlight;
+  }
+  stockSyncInFlight = syncLocalStockToNaverInternal();
+  try {
+    return await stockSyncInFlight;
+  } finally {
+    stockSyncInFlight = null;
+  }
+}
+
+async function syncLocalStockToNaverInternal() {
+  const startedAt = performance.now();
   const dryRun = CONFIG.stockSyncEnabled === "dry-run";
   if (CONFIG.stockSyncEnabled !== true && !dryRun) return;
   const planEndpoint = CONFIG.stockPlanEndpoint || String(CONFIG.endpoint || "").replace("/reservations", "/stock-plan");
@@ -333,7 +406,9 @@ async function syncLocalStockToNaver() {
   });
   const plan = await response.json().catch(() => ({}));
   if (!response.ok || plan.success === false || !Array.isArray(plan.slots)) throw new Error("Local stock plan unavailable");
+  const planMs = Math.round(performance.now() - startedAt);
   const roomItemIds = await discoverRoomItemIds();
+  const roomDiscoveryMs = Math.round(performance.now() - startedAt);
   const stored = await chrome.storage.local.get(STOCK_STATE_KEY);
   const closed = stored[STOCK_STATE_KEY] || {};
   const desired = new Map();
@@ -361,6 +436,7 @@ async function syncLocalStockToNaver() {
     // so an unverified slot is deliberately left unchanged.
     console.warn("[SuwonYT Naver] availability check skipped", error.message || error);
   }
+  const availabilityMs = Math.round(performance.now() - startedAt);
   let writeAuth = null;
 
   // A moved/deleted dashboard card no longer appears in the desired plan.
@@ -460,6 +536,13 @@ async function syncLocalStockToNaver() {
     };
   }
   await chrome.storage.local.set({ [STOCK_STATE_KEY]: closed });
+  console.info("[SuwonYT Naver] stock reconciliation completed", {
+    totalMs: Math.round(performance.now() - startedAt),
+    planMs,
+    roomDiscoveryMs,
+    availabilityMs,
+    desiredSlots: desired.size
+  });
 }
 
 async function startStockEventWatcher() {
@@ -478,14 +561,62 @@ async function startStockEventWatcher() {
       if (!response.ok || event.success === false) throw new Error("Local stock event stream unavailable");
       revision = Number(event.revision || revision);
       if (event.changed) {
-        console.info("[SuwonYT Naver] stock event received");
-        await syncLocalStockToNaver();
+        console.info("[SuwonYT Naver] stock event received", {
+          revision,
+          signalDelayMs: event.emittedAt ? Math.max(0, Date.now() - Number(event.emittedAt)) : null
+        });
+        try {
+          await syncLocalStockToNaver();
+        } catch (error) {
+          // A temporary Naver/tab failure must not stop the live event
+          // listener. The next dashboard event and the safety alarm retry it.
+          console.warn("[SuwonYT Naver] stock event sync failed; listener remains active", error.message || error);
+        }
       }
     }
   } catch (error) {
     console.warn("[SuwonYT Naver] stock event listener stopped", error.message || error);
   } finally {
     stockEventWatcherRunning = false;
+  }
+}
+
+async function startEmailHintWatcher() {
+  if (emailHintWatcherRunning) return;
+  emailHintWatcherRunning = true;
+  const eventEndpoint = CONFIG.emailHintEventEndpoint || String(CONFIG.endpoint || "").replace("/reservations", "/email-events");
+  let revision = 0;
+  try {
+    while (true) {
+      const url = new URL(eventEndpoint);
+      url.searchParams.set("after", String(revision));
+      const response = await fetch(url.href, {
+        headers: { "x-jumping-agent-token": CONFIG.agentToken }, cache: "no-store"
+      });
+      const event = await response.json().catch(() => ({}));
+      if (!response.ok || event.success === false) throw new Error("Local email event stream unavailable");
+      revision = Number(event.revision || revision);
+      if (event.changed) {
+        // Mail reached us first.  Fetch Naver's authoritative detail now;
+        // server-side booking-ID upsert prevents duplicate dashboard cards.
+        console.info("[SuwonYT Naver] mail hint received; requesting Naver details");
+        // Naver can deliver the email a few seconds before its booking list
+        // reflects the new record. Retry only for this mail-triggered event;
+        // the regular collection cadence stays at one minute.
+        for (const delayMs of [0, 5000, 12000, 20000]) {
+          if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
+          try {
+            await syncReservations();
+          } catch (error) {
+            console.warn("[SuwonYT Naver] mail-triggered detail retry failed", error.message || error);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn("[SuwonYT Naver] mail hint listener stopped", error.message || error);
+  } finally {
+    emailHintWatcherRunning = false;
   }
 }
 
@@ -506,6 +637,17 @@ chrome.webRequest.onBeforeSendHeaders.addListener(details => {
   }).then(() => console.info("[SuwonYT Naver] write authorization captured"));
 }, { urls: ["https://api-partner.booking.naver.com/*"] }, ["requestHeaders"]);
 
+// Staff edits on Naver's calendar are the source of truth for manual closes.
+// Capture their schedule PATCH payload, while ignoring writes initiated by
+// this extension itself through the short expected-write registry above.
+chrome.webRequest.onBeforeRequest.addListener(details => {
+  if (details.method !== "PATCH" || !/\/schedules(?:\?|$)/.test(details.url)) return;
+  const payload = requestPayload(details);
+  reportManualStockChange(details, payload).catch(error => {
+    console.warn("[SuwonYT Naver] manual stock reflection skipped", error.message || error);
+  });
+}, { urls: ["https://api-partner.booking.naver.com/*"] }, ["requestBody"]);
+
 async function ensureAlarm() {
   const reservationPeriod = Math.max(Number(CONFIG.pollMinutes) || 1, 1);
   // Chrome 120+ supports a stable minimum alarm interval of 30 seconds.
@@ -517,8 +659,8 @@ async function ensureAlarm() {
   chrome.alarms.create(STOCK_ALARM_NAME, { periodInMinutes: stockPeriod });
 }
 
-chrome.runtime.onInstalled.addListener(() => ensureAlarm().then(() => { startStockEventWatcher(); return syncAll(); }).catch(error => console.error("[SuwonYT Naver]", error)));
-chrome.runtime.onStartup.addListener(() => ensureAlarm().then(() => startStockEventWatcher()).catch(error => console.error("[SuwonYT Naver]", error)));
+chrome.runtime.onInstalled.addListener(() => ensureAlarm().then(() => { startStockEventWatcher(); startEmailHintWatcher(); return syncAll(); }).catch(error => console.error("[SuwonYT Naver]", error)));
+chrome.runtime.onStartup.addListener(() => ensureAlarm().then(() => { startStockEventWatcher(); startEmailHintWatcher(); }).catch(error => console.error("[SuwonYT Naver]", error)));
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === RESERVATION_ALARM_NAME) syncReservations().catch(error => console.error("[SuwonYT Naver]", error));
   if (alarm.name === STOCK_ALARM_NAME) {
@@ -528,5 +670,6 @@ chrome.alarms.onAlarm.addListener(alarm => {
 chrome.action.onClicked.addListener(() => {
   console.info("[SuwonYT Naver] manual sync requested", { build: EXTENSION_BUILD });
   startStockEventWatcher();
+  startEmailHintWatcher();
   syncAll(true).catch(error => console.error("[SuwonYT Naver]", error));
 });

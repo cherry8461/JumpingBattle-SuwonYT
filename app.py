@@ -9,6 +9,7 @@ import gspread
 import imaplib
 import email
 import base64
+import hashlib
 import logging
 import hmac
 from functools import wraps
@@ -39,6 +40,7 @@ from monitor_core.settings import (
 from monitor_modules.naver_reservations import (
     clear_dashboard_time_change,
     create_naver_reservations_blueprint,
+    notify_email_hint_received,
     notify_stock_plan_changed,
     record_dashboard_time_change,
 )
@@ -686,6 +688,18 @@ def init_db():
                 room_name TEXT NOT NULL,
                 status TEXT DEFAULT 'INIT',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    # Mail arrives before Naver's calendar updates. Keep only a short,
+    # deduplicated signal here; the extension fetches the authoritative
+    # customer details and booking ID before any dashboard card is created.
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_email_hints (
+                hint_key TEXT PRIMARY KEY,
+                booking_id TEXT,
+                use_date TEXT,
+                use_time_key TEXT,
+                room_name TEXT,
+                received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_email_hints_received ON naver_email_hints(received_at)')
         
 
     # Logical rooms remain stable even when each room later uses a separate PC.
@@ -784,6 +798,18 @@ def init_db():
                 response_summary TEXT NOT NULL DEFAULT '',
                 synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
+    # Slots directly closed in Naver by staff.  They create an informational
+    # grey card on the local timetable, but must never be written back to
+    # Naver by the extension as if they were locally-created reservations.
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_manual_stock_blocks (
+                room TEXT NOT NULL,
+                use_date TEXT NOT NULL,
+                use_time_key TEXT NOT NULL,
+                booking_row_id INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(room, use_date, use_time_key),
+                FOREIGN KEY(booking_row_id) REFERENCES bookings(id))''')
+
     # Keeps only a booking identifier to prevent duplicate same-day cancellation counts.
     cur.execute('''CREATE TABLE IF NOT EXISTS naver_cancellation_events (
                 booking_id TEXT PRIMARY KEY,
@@ -842,6 +868,7 @@ def init_db():
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_booking_card_links_row ON naver_booking_card_links(booking_row_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_time_overrides_source ON naver_time_overrides(source_date, source_time_key, source_room, state)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_stock_rules_date ON naver_stock_rules(use_date, use_time_key)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_manual_stock_blocks_row ON naver_manual_stock_blocks(booking_row_id)')
 
     cur.execute("PRAGMA table_info(queue_items)")
     queue_cols = [r[1] for r in cur.fetchall()]
@@ -2853,8 +2880,13 @@ def naver_booking_webhook():
         
         # 💡 아까 완성한 메일 파싱 및 캐시 DB 저장 함수 호출!
         parse_result = parse_and_save_naver_email(raw_email_content)
+        # The mail is an early signal only.  Final customer data is fetched
+        # from the logged-in Naver page, keyed by Naver booking ID.
+        email_hint = record_naver_email_hint(raw_email_content, parse_result)
+        notify_email_hint_received()
+        socketio.emit('naver_email_hint_received', {'received': True})
         
-        if parse_result:
+        if parse_result or email_hint:
             socketio.emit('walkin_added')
             print(f"✅ [실시간 푸시 발송 완료] 번호: {parse_result.get('res_id')}")
             return jsonify({'success': True, 'message': '네이버 예약 캐시 저장 및 실시간 푸시 완료', 'data': parse_result}), 200
@@ -2953,6 +2985,46 @@ def check_cancellations_on_startup():
     except Exception as e:
         print(f"❌ [서버 구동 취소 스캔 실패] 에러 내용: {e}")
 
+
+
+def record_naver_email_hint(raw_email_content, parsed_result=None):
+    """Record a minimal mail signal without creating a provisional card.
+
+    The complete email body is never stored.  Naver's booking ID remains the
+    final deduplication key when the Chrome extension sends its detail result.
+    """
+    text = str(raw_email_content or '')
+    booking_id = str((parsed_result or {}).get('booking_id') or '')
+    room_match = re.search(r'\b(C1|C2|B1|B2)\b', text, re.IGNORECASE)
+    date_match = re.search(r'(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})', text)
+    time_match = re.search(r'(?:(오전|오후|AM|PM)\s*)?(\d{1,2}):(\d{2})', text, re.IGNORECASE)
+    use_date = ''
+    use_time_key = ''
+    if date_match:
+        use_date = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
+    if time_match:
+        hour = int(time_match.group(2))
+        minute = int(time_match.group(3))
+        marker = (time_match.group(1) or '').lower()
+        if marker in ('오후', 'pm') and hour != 12:
+            hour += 12
+        elif marker in ('오전', 'am') and hour == 12:
+            hour = 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            use_time_key = f"{hour:02d}-{minute:02d}"
+    room_name = room_match.group(1).upper() if room_match else ''
+    hint_key = booking_id or hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest()
+    if not hint_key:
+        return None
+    with sqlite3.connect(DB_FILE, timeout=30) as conn:
+        conn.execute(
+            '''INSERT INTO naver_email_hints (hint_key, booking_id, use_date, use_time_key, room_name)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(hint_key) DO UPDATE SET received_at=CURRENT_TIMESTAMP''',
+            (hint_key, booking_id, use_date, use_time_key, room_name),
+        )
+        conn.execute("DELETE FROM naver_email_hints WHERE received_at < datetime('now', 'localtime', '-2 days')")
+    return {'room': room_name, 'date': use_date, 'time': use_time_key}
 
 
 def parse_and_save_naver_email(raw_email_content):
