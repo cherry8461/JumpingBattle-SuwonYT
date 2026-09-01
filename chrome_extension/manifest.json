@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JumpingBattle SuwonYT Naver Sync",
-  "version": "1.7.0",
+  "version": "2.0.1",
   "minimum_chrome_version": "120",
   "permissions": ["alarms", "storage", "webRequest", "scripting", "tabs"],
   "host_permissions": [
@@ -12,6 +12,21 @@
   "background": {
     "service_worker": "sw.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://partner.booking.naver.com/*"],
+      "js": ["naver-schedule-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://partner.booking.naver.com/*"],
+      "js": ["naver-schedule-page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    }
+  ],
   "action": {
     "default_title": "Sync Naver reservations now"
   }

@@ -452,8 +452,13 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
             return jsonify(success=False, message="Unauthorized agent"), 401
         body = request.get_json(silent=True) or {}
         items = body.get("items")
-        if not isinstance(items, list) or len(items) > 30:
-            return jsonify(success=False, message="items must be a list of up to 30 changes"), 400
+        if body.get("source") != "staff-schedule-patch":
+            return jsonify(success=False, message="manual stock source is not accepted"), 400
+        # A staff action changes one Naver schedule slot at a time.  Refuse
+        # bulk reports so a browser-side detection error can never create a
+        # large batch of grey timetable cards.
+        if not isinstance(items, list) or len(items) != 1:
+            return jsonify(success=False, message="exactly one manual stock change is required"), 400
 
         applied = 0
         with get_db_connection() as connection:

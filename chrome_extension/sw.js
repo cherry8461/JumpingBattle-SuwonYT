@@ -12,7 +12,7 @@ const STOCK_STATE_KEY = "naver-stock-closed-by-extension";
 const NAVER_WRITE_AUTH_KEY = "naver-write-auth";
 const EXPECTED_STOCK_WRITE_KEY = "expected-extension-stock-writes";
 const KST_TIME_ZONE = "Asia/Seoul";
-const EXTENSION_BUILD = "suwonyt-mail-first-sync-20260831-01";
+const EXTENSION_BUILD = "suwonyt-manual-stock-reconcile-20260901-01";
 let roomItemIdsCache = null;
 let roomItemIdsCacheAt = 0;
 let stockEventWatcherRunning = false;
@@ -336,7 +336,7 @@ async function reportManualStockChange(details, payload) {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json", "x-jumping-agent-token": CONFIG.agentToken },
-    body: JSON.stringify({ items: [{ room, date, time, blocked: stock <= 0 }] })
+    body: JSON.stringify({ source: "staff-schedule-patch", items: [{ room, date, time, blocked: stock <= 0 }] })
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body.success === false) throw new Error(body.message || `manual stock HTTP ${response.status}`);
@@ -381,6 +381,59 @@ async function fetchAvailabilityByItem() {
   return new Map((Array.isArray(body?.bizItems) ? body.bizItems : [])
     .map(item => [Number(item?.bizItemId), item])
     .filter(([itemId]) => Number.isFinite(itemId)));
+}
+
+function stockCheckDates() {
+  const today = kstDateKey();
+  const first = new Date(`${today}T00:00:00+09:00`);
+  return Array.from({ length: 15 }, (_, offset) => kstDateKey(new Date(first.getTime() + offset * 24 * 60 * 60 * 1000)));
+}
+
+function stockCheckTimes() {
+  const times = [];
+  for (let minutes = 10 * 60; minutes <= 23 * 60; minutes += 20) {
+    times.push(`${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`);
+  }
+  return times;
+}
+
+async function mirrorManualNaverBlocks(availabilityByItem, roomItemIds, desired, closed) {
+  // Naver's calendar sometimes hides a staff edit's PATCH body from Chrome.
+  // Its availability response is still authoritative: stock 0 without a
+  // native booking means the staff manually closed that slot.
+  const items = [];
+  const dates = stockCheckDates();
+  const times = stockCheckTimes();
+  for (const [room, rawItemId] of Object.entries(roomItemIds)) {
+    const item = availabilityByItem.get(Number(rawItemId));
+    if (!item) continue;
+    for (const date of dates) {
+      for (const time of times) {
+        const key = `${room}|${date}|${time}`;
+        if (desired.has(key) || closed[key]) continue;
+        const slotStatus = getSlotAvailability(item, date, time);
+        if (slotStatus && Number(slotStatus.stock) <= 0 && !hasNativeBooking(slotStatus)) {
+          items.push({ room, date, time, blocked: true });
+        }
+      }
+    }
+  }
+  // The local endpoint is intentionally add-only here. It never deletes a
+  // card during a background availability read.
+  for (let index = 0; index < items.length; index += 30) {
+    const batch = items.slice(index, index + 30);
+    const endpoint = CONFIG.manualStockEndpoint || String(CONFIG.endpoint || "").replace("/reservations", "/manual-stock");
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-jumping-agent-token": CONFIG.agentToken },
+      body: JSON.stringify({ items: batch })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.success === false) throw new Error(body.message || `manual stock mirror HTTP ${response.status}`);
+    if (Number(body.applied || 0) > 0) {
+      console.info("[SuwonYT Naver] manual stock mirrored", { applied: body.applied, blocked: batch.length });
+    }
+  }
 }
 
 async function syncLocalStockToNaver() {
@@ -528,12 +581,12 @@ async function syncLocalStockToNaverInternal() {
     }
     if (!writeAuth) writeAuth = await getNaverCsrfToken();
     await patchNaverStock(roomItemId, slot, writeAuth, desiredStock);
-    closed[key] = {
+      closed[key] = {
       roomItemId,
       originalStock: Number.isFinite(Number(slotStatus?.stock)) ? Number(slotStatus.stock) : null,
       kind: slot.kind || "local_card",
       closedAt: new Date().toISOString()
-    };
+      };
   }
   await chrome.storage.local.set({ [STOCK_STATE_KEY]: closed });
   console.info("[SuwonYT Naver] stock reconciliation completed", {
@@ -637,16 +690,27 @@ chrome.webRequest.onBeforeSendHeaders.addListener(details => {
   }).then(() => console.info("[SuwonYT Naver] write authorization captured"));
 }, { urls: ["https://api-partner.booking.naver.com/*"] }, ["requestHeaders"]);
 
-// Staff edits on Naver's calendar are the source of truth for manual closes.
-// Capture their schedule PATCH payload, while ignoring writes initiated by
-// this extension itself through the short expected-write registry above.
-chrome.webRequest.onBeforeRequest.addListener(details => {
-  if (details.method !== "PATCH" || !/\/schedules(?:\?|$)/.test(details.url)) return;
-  const payload = requestPayload(details);
-  reportManualStockChange(details, payload).catch(error => {
+// The Naver page hook forwards the exact PATCH JSON before it is sent.  This
+// is more reliable than webRequest.requestBody, which Chrome can omit for
+// cross-origin page requests.
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type === "naver-schedule-bridge-ready") {
+    console.info("[SuwonYT Naver] schedule bridge ready", { frameId: sender.frameId, url: sender.url });
+    return;
+  }
+  if (message?.type === "naver-schedule-hook-ready") {
+    console.info("[SuwonYT Naver] schedule page hook ready", { frameId: sender.frameId, url: sender.url });
+    return;
+  }
+  if (message?.type !== "naver-staff-schedule-patch") return;
+  const url = String(message.url || "");
+  const payload = message.payload;
+  if (!/https:\/\/api-partner\.booking\.naver\.com\/v3\.1\/businesses\//.test(url)) return;
+  console.info("[SuwonYT Naver] staff schedule patch captured", { url, payload });
+  reportManualStockChange({ url }, payload).catch(error => {
     console.warn("[SuwonYT Naver] manual stock reflection skipped", error.message || error);
   });
-}, { urls: ["https://api-partner.booking.naver.com/*"] }, ["requestBody"]);
+});
 
 async function ensureAlarm() {
   const reservationPeriod = Math.max(Number(CONFIG.pollMinutes) || 1, 1);

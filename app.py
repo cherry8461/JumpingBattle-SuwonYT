@@ -2391,6 +2391,9 @@ def delete_booking(bid):
         # 🎯 [교정 2]: with conn 보호막을 씌워 데이터 삭제 즉시 자동으로 Commit 하고 잠금을 풀게 합니다.
         with conn:
             clear_dashboard_time_change(cur, bid)
+            # A grey manual-Naver block has a mapping row as well as its
+            # timetable row. Clear both when staff removes the display card.
+            cur.execute('DELETE FROM naver_manual_stock_blocks WHERE booking_row_id=?', (bid,))
             cur.execute('DELETE FROM bookings WHERE id=?', (bid,))
             
         # 🚀 디비에서 완전히 증발한 것을 확인한 뒤 프론트엔드에 성공 리턴

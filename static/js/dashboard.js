@@ -610,7 +610,11 @@ function getActiveCardsForRoom(room) {
         if (!cell) return;
         cell.querySelectorAll('.booking-card').forEach(card => {
             const isCompleted = card.querySelector('.p-completed')?.checked;
-            if (!isCompleted) cards.push(card);
+            const isManualNaverBlock = card.dataset.manualNaverBlock === 'true';
+            // A staff-created Naver close occupies its timetable cell, but it
+            // is not a customer waiting to play and must never receive ETA
+            // / entry / finish labels or affect another team's queue time.
+            if (!isCompleted && !isManualNaverBlock) cards.push(card);
         });
     });
     return cards;
