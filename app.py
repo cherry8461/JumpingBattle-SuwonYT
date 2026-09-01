@@ -557,6 +557,18 @@ def init_db():
                   reg_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   status TEXT DEFAULT 'waiting')''')
 
+    # Short internal trace for diagnosing rare kiosk input issues.  It is not
+    # exposed on the staff screens and old records are removed automatically.
+    cur.execute('''CREATE TABLE IF NOT EXISTS walkin_submission_audit (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  request_id TEXT NOT NULL UNIQUE,
+                  walkin_id INTEGER,
+                  submitted_team TEXT NOT NULL DEFAULT '',
+                  team_input_trace TEXT NOT NULL DEFAULT '[]',
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  FOREIGN KEY(walkin_id) REFERENCES walkins(id))''')
+    cur.execute("DELETE FROM walkin_submission_audit WHERE created_at < datetime('now', '-30 days')")
+
     cur.execute("PRAGMA table_info(walkins)")
     walkin_columns = {row[1] for row in cur.fetchall()}
     if 'room_fast' not in walkin_columns:
@@ -859,6 +871,7 @@ def init_db():
         cur.execute('CREATE INDEX IF NOT EXISTS idx_walkins_date_status ON walkins(visit_date, status)')
     elif 'reg_time' in walkin_columns:
         cur.execute('CREATE INDEX IF NOT EXISTS idx_walkins_time_status ON walkins(reg_time, status)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_walkin_submission_audit_created ON walkin_submission_audit(created_at)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_mail_cache_today ON naver_mail_cache(use_date, status, use_time_key)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_supply_history_date ON supply_history(target_date)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_room_agents_room_status ON room_agents(room_id, status)')
@@ -2368,6 +2381,10 @@ def update_booking(bid):
                 data.get('paid', 0), data.get('completed', 0), data.get('payment_data', None), bid
             )
         )
+        # Turning a manual-close placeholder into a real team must also clear
+        # its manual-block mapping, otherwise it would remain a drop target.
+        if team != '네이버 수동 마감':
+            cur.execute('DELETE FROM naver_manual_stock_blocks WHERE booking_row_id=?', (bid,))
         record_dashboard_time_change(cur, bid, booking_date, data.get('time_key'), data.get('room'))
         return jsonify({"success": True, "message": "수정 완료"})
         
@@ -3370,6 +3387,21 @@ def add_walkin():
     data = request.json or {}
     agreed = 1 if data.get('is_agreed') else 0
 
+    request_id = str(data.get('client_submission_id', '')).strip()[:100]
+    raw_trace = data.get('team_input_trace', [])
+    trace = []
+    if isinstance(raw_trace, list):
+        for item in raw_trace[-30:]:
+            if not isinstance(item, dict):
+                continue
+            trace.append({
+                'event': str(item.get('event', ''))[:40],
+                'value': str(item.get('value', ''))[:30],
+                'data': str(item.get('data', ''))[:30],
+                'inputType': str(item.get('inputType', ''))[:40],
+                'at': int(item.get('at', 0) or 0),
+            })
+
     name = str(data.get('name', '')).strip()
     if not name:
         return jsonify({"success": False, "status": "error", "message": "성함을 입력해 주세요."}), 400
@@ -3391,6 +3423,17 @@ def add_walkin():
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    if request_id:
+        try:
+            c.execute(
+                'INSERT INTO walkin_submission_audit (request_id, submitted_team, team_input_trace) VALUES (?, ?, ?)',
+                (request_id, team, json.dumps(trace, ensure_ascii=False))
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            # A retry for the same button press must not create another row.
+            conn.close()
+            return jsonify({"success": True, "status": "duplicate_ignored"})
     c.execute("PRAGMA table_info(walkins)")
     columns = {row[1] for row in c.fetchall()}
 
@@ -3406,6 +3449,9 @@ def add_walkin():
         params = (name, team, level, people, room_size, room_fast, level, room_size, room_fast, adult_count, child_count, phone, agreed, visit_date, visit_time)
 
     c.execute(query, params)
+    walkin_id = c.lastrowid
+    if request_id:
+        c.execute('UPDATE walkin_submission_audit SET walkin_id=? WHERE request_id=?', (walkin_id, request_id))
     conn.commit()
     conn.close()
     # 워크인 추가 시 대시보드에 알림

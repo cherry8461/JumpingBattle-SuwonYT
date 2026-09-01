@@ -1511,6 +1511,37 @@
         .timeline-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
         .timeline-table th { position: sticky; top: 0; background: #f8fafc; z-index: 30; border: 1px solid #e2e8f0; padding: 12px; font-size: 15px; font-weight: 800; color: #475569; letter-spacing: 1px; }
         .timeline-table td { border: 1px solid #dee2e6; padding: 4px; vertical-align: top; height: 50px; background: white; position: relative; overflow: visible; }
+        .cell-add-booking-btn {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            z-index: 30;
+            width: 30px;
+            height: 30px;
+            transform: translate(-50%, -50%);
+            border: 1px solid #94a3b8;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.94);
+            color: #475569;
+            font-size: 22px;
+            line-height: 24px;
+            font-weight: 500;
+            cursor: pointer;
+            opacity: 0.3;
+            transition: opacity .15s ease, color .15s ease, background .15s ease, transform .15s ease;
+        }
+        .timeline-table td:hover .cell-add-booking-btn,
+        .cell-add-booking-btn:focus-visible {
+            opacity: 1;
+            color: #ffffff;
+            background: #0f766e;
+            border-color: #0f766e;
+            transform: translate(-50%, -50%) scale(1.08);
+            outline: none;
+        }
+        .timeline-table td:has(.booking-card) > .cell-add-booking-btn {
+            display: none;
+        }
         .timeline-table tbody tr:nth-child(odd) td:not(.time-col) { background: #fcfdff; }
         .timeline-table tbody tr:nth-child(even) td:not(.time-col) { background: #f8fafc; }
         .timeline-table td.drag-over { outline: 2px dashed #4c8bf5; outline-offset: -2px; background: #eef5ff; }

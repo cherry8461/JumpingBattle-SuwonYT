@@ -12,7 +12,7 @@ const STOCK_STATE_KEY = "naver-stock-closed-by-extension";
 const NAVER_WRITE_AUTH_KEY = "naver-write-auth";
 const EXPECTED_STOCK_WRITE_KEY = "expected-extension-stock-writes";
 const KST_TIME_ZONE = "Asia/Seoul";
-const EXTENSION_BUILD = "suwonyt-manual-stock-reconcile-20260901-01";
+const EXTENSION_BUILD = "suwonyt-manual-stock-reconcile-20260901-02";
 let roomItemIdsCache = null;
 let roomItemIdsCacheAt = 0;
 let stockEventWatcherRunning = false;
@@ -352,8 +352,19 @@ function getSlotAvailability(item, date, time) {
   const visit = (value, path = "") => {
     if (!value || typeof value !== "object" || matched) return;
     if (Object.prototype.hasOwnProperty.call(value, "stock")) {
+      // Depending on the Naver response, a schedule is identified either by
+      // its JSON tree key or by fields on the schedule itself.  The previous
+      // version only used the tree key, so a closed slot could fail to be
+      // found after a dashboard card was deleted and therefore could not be
+      // safely reopened.
+      const directDate = String(value.startDate || value.useDate || value.bookingDate || value.date || "").replace(/[^0-9]/g, "");
+      const directTime = String(value.startTime || value.useTime || value.bookingTime || value.time || "").replace(/[^0-9]/g, "");
+      const directDateTime = String(value.startDateTime || value.useDateTime || value.dateTime || "").replace(/[^0-9]/g, "");
       const normalizedPath = path.replace(/[^0-9]/g, "");
-      if (normalizedPath.includes(wantedDate) && normalizedPath.includes(wantedTime)) matched = value;
+      const matchedByFields = directDate === wantedDate && directTime === wantedTime;
+      const matchedByDateTime = directDateTime.includes(wantedDate) && directDateTime.includes(wantedTime);
+      const matchedByPath = normalizedPath.includes(wantedDate) && normalizedPath.includes(wantedTime);
+      if (matchedByFields || matchedByDateTime || matchedByPath) matched = value;
     }
     Object.entries(value).forEach(([key, child]) => visit(child, `${path}|${key}`));
   };

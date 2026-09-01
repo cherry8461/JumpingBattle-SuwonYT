@@ -385,16 +385,21 @@ document.addEventListener('DOMContentLoaded', function() {
     const tabButtons = document.querySelectorAll('.tab-btn');
     tabButtons.forEach(button => {
         button.addEventListener('click', function() {
+            recordTeamInputTrace(`tab:${this.dataset.target || ''}`);
             activateTab(this.dataset.target);
         });
     });
     // 1. 팀명 10자 제한 실시간 감시
     const teamInput = document.getElementById('team');
     if (teamInput) {
-        teamInput.addEventListener('input', function() {
+        teamInput.addEventListener('input', function(event) {
             if (this.value.length > 10) {
                 this.value = this.value.slice(0, 10);
             }
+            recordTeamInputTrace('input', event);
+        });
+        ['focus', 'change', 'blur', 'compositionstart', 'compositionend'].forEach(eventName => {
+            teamInput.addEventListener(eventName, event => recordTeamInputTrace(eventName, event));
         });
     }
 
@@ -481,8 +486,40 @@ function closeModal() {
 
 
 const successSound = new Audio('/static/sounds/submit_success.mp3');
+let walkinSubmitInFlight = false;
+let walkinSubmissionId = '';
+let teamInputTrace = [];
+
+function recordTeamInputTrace(eventName, event = null) {
+    const teamInput = document.getElementById('team');
+    if (!teamInput) return;
+    teamInputTrace.push({
+        event: String(eventName || ''),
+        value: String(teamInput.value || ''),
+        data: String(event?.data || ''),
+        inputType: String(event?.inputType || ''),
+        at: Date.now()
+    });
+    if (teamInputTrace.length > 30) teamInputTrace = teamInputTrace.slice(-30);
+}
+
+function getWalkinSubmissionId() {
+    if (walkinSubmissionId) return walkinSubmissionId;
+    walkinSubmissionId = globalThis.crypto?.randomUUID?.()
+        || `walkin-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return walkinSubmissionId;
+}
+
+function setWalkinSubmitBusy(isBusy) {
+    const button = document.querySelector('.submit-btn-capsule');
+    if (!button) return;
+    button.disabled = isBusy;
+    button.classList.toggle('is-submitting', isBusy);
+    button.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+}
 
 async function sendWalkInData() {
+    if (walkinSubmitInFlight) return;
     // 현재 언어에 맞는 알림 문구 사전 가져오기
     const alertData = translations[currentLang].alerts;
 
@@ -536,10 +573,13 @@ async function sendWalkInData() {
         room_size: getSelectedRadioValue('room_size'),
         room_fast: document.getElementById('room_fast').checked,
         phone: document.getElementById('phone').value.trim(),
-        is_agreed: isAgreed
+        is_agreed: isAgreed,
+        client_submission_id: getWalkinSubmissionId(),
+        team_input_trace: teamInputTrace.slice(-30)
     };
 
-    
+    walkinSubmitInFlight = true;
+    setWalkinSubmitBusy(true);
     try {
         const res = await fetch('/api/walkin/add', {
             method: 'POST',
@@ -555,6 +595,10 @@ async function sendWalkInData() {
             successSound.play();
             showCustomAlert(alertData.success); // "신청 완료!"
             resetFormFields();
+            walkinSubmissionId = '';
+            teamInputTrace = [];
+            walkinSubmitInFlight = false;
+            setWalkinSubmitBusy(false);
             return;
         }
 
@@ -565,10 +609,14 @@ async function sendWalkInData() {
             if (data?.message) message = data.message;
         } catch (e) {}
         showCustomAlert(message);
+        walkinSubmitInFlight = false;
+        setWalkinSubmitBusy(false);
 
     } catch (e) {
         // 네트워크 연결 실패 등
         showCustomAlert(alertData.error);
+        walkinSubmitInFlight = false;
+        setWalkinSubmitBusy(false);
     }
 }
 

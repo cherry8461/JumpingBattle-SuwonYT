@@ -2228,6 +2228,31 @@ async function persistCellOrder(cell) {
     }
 }
 
+function getManualNaverBlockCard(cell) {
+    return [...cell.querySelectorAll('.booking-card')]
+        .find(card => card.dataset.manualNaverBlock === 'true'
+            || card.classList.contains('naver-manual-block-card')
+            || card.querySelector('.p-team-text')?.textContent.trim() === '네이버 수동 마감') || null;
+}
+
+async function clearManualNaverBlockForDrop(targetCell, label) {
+    const manualCard = getManualNaverBlockCard(targetCell);
+    if (!manualCard) return true;
+    if (!confirm(`네이버 수동 마감 칸을 ${label || '이 팀'} 정보로 교체할까요?\n기존 회색 카드는 대시보드에서 삭제됩니다.`)) {
+        return false;
+    }
+    const bid = parseInt(manualCard.dataset.bid || '0', 10);
+    if (bid > 0) {
+        const response = await fetch(`/api/booking/${bid}`, { method: 'DELETE' });
+        if (!response.ok) {
+            alert('회색 카드 삭제에 실패했습니다.');
+            return false;
+        }
+    }
+    manualCard.remove();
+    return true;
+}
+
 async function drop(event) {
     event.preventDefault();
 
@@ -2407,8 +2432,17 @@ async function drop(event) {
             }
             if (!sourceCard) return;
 
+            if (sourceCard.dataset.manualNaverBlock === 'true') return;
+            const sourceLabel = data.team || data.name || '이 팀';
+            const replacingManualBlock = !!getManualNaverBlockCard(targetCell);
+            if (replacingManualBlock && !(await clearManualNaverBlockForDrop(targetCell, sourceLabel))) return;
+
             const sameCell = sourceCell === targetCell;
-            insertCardByPointer(targetCell, sourceCard, event);
+            if (replacingManualBlock) {
+                targetCell.appendChild(sourceCard);
+            } else {
+                insertCardByPointer(targetCell, sourceCard, event);
+            }
             if (!sameCell) {
                 const sourceRoom = (sourceCell.id.split('-')[3] || '').toUpperCase();
                 const targetRoom = (targetCell.id.split('-')[3] || '').toUpperCase();
@@ -2446,6 +2480,8 @@ async function drop(event) {
         } else if (data.type === 'queue') {
             const qid = parseInt(data.qid || '0', 10);
             if (!qid) return;
+            const sourceLabel = data.team || data.name || '이 팀';
+            if (!(await clearManualNaverBlockForDrop(targetCell, sourceLabel))) return;
             const newCard = addCard(targetCell, {
                 name: data.name,
                 phone: data.phone,
@@ -4776,7 +4812,9 @@ function updateCard(card, b) {
     const isViewAll = document.body.classList.contains('view-all-mode');
     const pDataRaw = b.payment_data || card.dataset.paymentData;
     const parsed = parsePaymentDataSafe(pDataRaw);
-    const isManualNaverBlock = parsed?.naverManualBlock === true;
+    const isManualNaverBlock = parsed?.naverManualBlock === true
+        || String(b.team || '').trim() === '네이버 수동 마감'
+        || card.dataset.manualNaverBlock === 'true';
     card.classList.toggle('naver-manual-block-card', isManualNaverBlock);
     card.dataset.manualNaverBlock = isManualNaverBlock ? 'true' : 'false';
 
@@ -5189,6 +5227,32 @@ function updateBookingPresence(cell) {
     // 카드 자체가 has-booking을 항상 보유하므로 no-op
 }
 
+// Add a blank game card directly from a timetable cell.  The existing payment
+// modal is used so time and room always match the cell the staff selected.
+function openNewBookingModalForCell(cell) {
+    const mainWrapper = document.querySelector('.main-wrapper');
+    if (mainWrapper && mainWrapper.dataset.readonly === 'true') {
+        alert('과거 날짜에는 새 게임 카드를 추가할 수 없습니다.');
+        return;
+    }
+    if (!cell) return;
+
+    const card = addCard(cell, {
+        name: '',
+        team: '',
+        level: '',
+        people: '',
+        phone: '',
+        paid: false,
+        completed: false,
+        payment_data: null
+    });
+    card.dataset.createdFromCellButton = 'true';
+
+    const view = card.querySelector('.cell-view');
+    if (view) openPaymentModalFromTimeline(view);
+}
+
 function initSchedule(startHour = 10, endHour = 23, interval = 20) {
     const tbody = document.getElementById('timelineBody');
     if (!tbody) return;
@@ -5214,6 +5278,18 @@ function initSchedule(startHour = 10, endHour = 23, interval = 20) {
                 cellTd.id = `cell-${h}-${m}-${room}`;
                 cellTd.setAttribute('ondragover', 'allowDrop(event)');
                 cellTd.setAttribute('ondrop', 'drop(event)');
+                const addButton = document.createElement('button');
+                addButton.type = 'button';
+                addButton.className = 'cell-add-booking-btn';
+                addButton.textContent = '+';
+                addButton.title = '이 시간에 게임 카드 추가';
+                addButton.setAttribute('aria-label', `${h}:${String(m).padStart(2, '0')} ${room} 게임 카드 추가`);
+                addButton.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openNewBookingModalForCell(cellTd);
+                });
+                cellTd.appendChild(addButton);
                 tr.appendChild(cellTd);
             });
             tbody.appendChild(tr);
@@ -5940,11 +6016,16 @@ function openPaymentModal(queueItem) {
 }
 
 function closePaymentModal() {
+    const temporaryCard = currentPaymentCard;
     const modal = document.getElementById("paymentModal");
     modal.querySelectorAll('input.field-edit').forEach(input => input.blur());
     modal.classList.remove("show");
     setPaymentCopyGroupBadge(null);
     closePaymentCopyGroupPicker();
+    if (temporaryCard?.dataset?.createdFromCellButton === 'true'
+        && !(parseInt(temporaryCard.dataset.bid || '0', 10) > 0)) {
+        temporaryCard.remove();
+    }
     currentPaymentItem = null;
     currentPaymentCell = null;
     currentPaymentCard = null;
