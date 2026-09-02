@@ -1,5 +1,8 @@
 # Secrets and credentials
 .env
+remote_bridge/*
+!remote_bridge/suwonyt-ui-bridge-v2.ps1
+!remote_bridge/run-suwonyt-ui-bridge.cmd
 .env.*
 !.env.example
 chrome_extension/local-config.js

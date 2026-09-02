@@ -44,6 +44,7 @@ from monitor_modules.naver_reservations import (
     notify_stock_plan_changed,
     record_dashboard_time_change,
 )
+from monitor_modules.remote_commands import create_remote_commands_blueprint
 
 # ========================================================
 # Flask
@@ -58,6 +59,7 @@ web.wsgi_app = ProxyFix(web.wsgi_app, x_proto=1, x_host=1)
 
 socketio = SocketIO(web, cors_allowed_origins="*", ping_timeout=60, ping_interval=15, async_mode='threading')
 web.register_blueprint(create_naver_reservations_blueprint(socketio))
+web.register_blueprint(create_remote_commands_blueprint(socketio, get_db_connection))
 
 OFFSET_FILE = "log_offset.dat"
 PAD_COUNT = 4

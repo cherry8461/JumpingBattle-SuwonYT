@@ -1905,10 +1905,16 @@ async function copyCardInfo(buttonEl) {
         currentPaymentData = card.dataset.paymentData ? JSON.parse(card.dataset.paymentData) : null;
     } catch (e) {}
     
+    const sourceFlags = currentPaymentData?.roomFlags || roomFlagsFromLabel(roomFlag);
+    const copiedFlags = normalizeRoomFlagsForRoom(room, sourceFlags);
+    const copiedRoomFlagLabel = roomFlagLabelFromFlags(copiedFlags);
+    newCard.querySelector('.p-level-people-text').innerHTML = buildCardMetaHtml('미입력', people, copiedRoomFlagLabel);
+
     if (currentPaymentData?.partyRoom) {
         newCard.dataset.paymentData = JSON.stringify({
             partyRoom: true,
-            roomFlags: currentPaymentData.roomFlags,
+            roomFlags: copiedFlags,
+            roomFlagLabel: copiedRoomFlagLabel,
             isBooker: false
         });
         // 파티룸 카드에 party-room 클래스 추가 (보라색 배경)
@@ -1924,7 +1930,9 @@ async function copyCardInfo(buttonEl) {
     } else {
         // 파티룸이 아닌 경우만 isBooker를 false로 초기화
         newCard.dataset.paymentData = JSON.stringify({
-            isBooker: false
+            isBooker: false,
+            roomFlags: copiedFlags,
+            roomFlagLabel: copiedRoomFlagLabel
         });
     }
 
@@ -1939,6 +1947,58 @@ async function copyCardInfo(buttonEl) {
     await saveCard(newCard);
 
     showToast(`${targetTimeKey.replace('-', ':')}로 복제되었습니다.`, card);
+}
+
+async function sendCardToGame(buttonEl) {
+    const card = buttonEl ? buttonEl.closest('.booking-card') : null;
+    if (!card || card.dataset.manualNaverBlock === 'true') return;
+
+    const cell = card.closest('td[id^="cell-"]');
+    const roomId = (cell?.id.split('-')[3] || '').toUpperCase();
+    const teamName = card.querySelector('.p-team-text')?.textContent.trim() || '';
+    const meta = parseCardMetaText(card.querySelector('.p-level-people-text')?.textContent || '');
+    const level = meta.level || '';
+    const paymentData = parsePaymentDataSafe(card.dataset.paymentData);
+    const roomFlags = paymentData?.roomFlags || roomFlagsFromLabel(meta.roomFlagLabel);
+    let mapPrefix = '소형';
+
+    if (roomId === 'B1' || roomId === 'B2') {
+        const mediumSelected = !!roomFlags?.M;
+        const largeSelected = !!roomFlags?.L;
+        if (mediumSelected === largeSelected) {
+            showToast('B방은 모달에서 중 또는 대 중 하나를 선택한 뒤 전송해주세요.', card);
+            return;
+        }
+        mapPrefix = mediumSelected ? '중형' : '대형';
+    }
+
+    if (!['C1', 'C2', 'B1', 'B2'].includes(roomId) || !teamName || !level || level === '미입력') {
+        showToast('방, 팀명, 난이도를 모두 입력한 뒤 전송해주세요.', card);
+        return;
+    }
+
+    buttonEl.disabled = true;
+    buttonEl.classList.add('is-command-pending');
+    try {
+        const response = await fetch('/api/game-commands/set-info', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomId, teamName, level, mapPrefix }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+            throw new Error(result.message || '게임 프로그램 전송 요청에 실패했습니다.');
+        }
+        showToast(result.message || `${roomId} 방으로 전송 요청했습니다.`, card);
+        buttonEl.title = '게임 프로그램 전송 요청됨';
+        setTimeout(() => { buttonEl.title = '게임 프로그램에 팀명·난이도 전송'; }, 3000);
+    } catch (error) {
+        console.error('게임 프로그램 전송 요청 실패:', error);
+        showToast(error.message || '게임 프로그램 전송 요청에 실패했습니다.', card);
+    } finally {
+        buttonEl.disabled = false;
+        buttonEl.classList.remove('is-command-pending');
+    }
 }
 
 async function sendCardToQueue(buttonEl) {
@@ -2500,6 +2560,8 @@ async function drop(event) {
                 });
                 updateCardView(newCard);
             }
+            // 대기에서 B방으로 바로 입력하는 경우에는 중형을 기본으로 적용한다.
+            applyCardRoomFlagsForRoom(newCard, targetCell.id.split('-')[3]);
             await saveCard(newCard);
             await fetch(`/api/queue/${qid}`, { method: 'DELETE' });
             const dragged = document.querySelector(`.queue-item-manual[data-qid="${data.qid}"]`);
@@ -3083,8 +3145,13 @@ function applyAutoRoomFlags(roomValue) {
     if (room === 'B1' || room === 'B2') {
         if (current.F) {
             setRoomFlags({ F: true, S: false, M: true, L: false });
+        } else if (!!current.M !== !!current.L) {
+            // B방끼리 이동하거나 기존 B방 카드를 열 때는 직원이 선택했던
+            // 중형/대형 값을 그대로 유지한다.
+            setRoomFlags({ F: false, S: false, M: !!current.M, L: !!current.L });
         } else {
-            setRoomFlags({ F: false, S: false, M: false, L: false });
+            // 신규 B방 카드와 소형방에서 B방으로 이동한 카드는 중형이 기본이다.
+            setRoomFlags({ F: false, S: false, M: true, L: false });
         }
         return;
     }
@@ -3437,7 +3504,11 @@ function normalizeRoomFlagsForRoom(roomValue, flags) {
         if (current.F) {
             return { F: true, S: false, M: true, L: false };
         }
-        return { F: false, S: false, M: !!current.M, L: !!current.L };
+        // 기존 B방의 중/대 선택은 보존한다. 그 외(신규·소형방에서 이동)는 중형 기본.
+        if (!!current.M !== !!current.L) {
+            return { F: false, S: false, M: !!current.M, L: !!current.L };
+        }
+        return { F: false, S: false, M: true, L: false };
     }
     return { F: !!current.F, S: !!current.S, M: !!current.M, L: !!current.L };
 }
@@ -4761,7 +4832,7 @@ function createBookingCard() {
                 <div class="p-payment-text"><span class="p-paid-status queue-transfer-status" style="color:#d32f2f;">결제미완료</span><span class="p-payment-amounts"></span>
                     <div class="booking-status">
                         <div class="queue-action-row">
-                            <button class="queue-transfer-btn" onclick="event.stopPropagation(); sendCardToQueue(this)" title="전송"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+                            <button class="queue-transfer-btn" onclick="event.stopPropagation(); sendCardToGame(this)" title="게임 프로그램에 팀명·난이도 전송"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
                             <button class="queue-copy-btn" onclick="event.stopPropagation(); copyCardInfo(this)" title="복사"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></button>
                             <button class="queue-complete-btn" onclick="event.stopPropagation(); markCompleted(this)" title="완료"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
                         </div>
@@ -5931,11 +6002,8 @@ function openPaymentModalFromTimeline(cellView) {
     document.getElementById("cardInput").value = paymentData?.cardInput || "";
     document.getElementById("cashInput").value = paymentData?.cashInput || "";
     document.getElementById("transferInput").value = paymentData?.transferInput || "";
-    if (paymentData?.roomFlags) {
-        setRoomFlags(paymentData.roomFlags);
-    } else {
-        setRoomFlags(roomFlagsFromLabel(parsedMeta.roomFlagLabel));
-    }
+    const initialRoomFlags = paymentData?.roomFlags || roomFlagsFromLabel(parsedMeta.roomFlagLabel);
+    setRoomFlags(normalizeRoomFlagsForRoom(room, initialRoomFlags));
 
     document.getElementById("paymentMatchStatus").style.display = "none";
     togglePartyRoomMode();
@@ -6001,9 +6069,8 @@ function openPaymentModal(queueItem) {
     document.getElementById("cashInput").value = paymentData?.cashInput || "";
     document.getElementById("transferInput").value = paymentData?.transferInput || "";
     setPaymentRoomValue(currentPaymentItem?.dataset?.room || 'C1');
-    if (paymentData?.roomFlags) {
-        setRoomFlags(paymentData.roomFlags);
-    }
+    const queueRoom = currentPaymentItem?.dataset?.room || 'C1';
+    setRoomFlags(normalizeRoomFlagsForRoom(queueRoom, paymentData?.roomFlags || {}));
     
     document.getElementById("paymentMatchStatus").style.display = "none";
     togglePartyRoomMode();
