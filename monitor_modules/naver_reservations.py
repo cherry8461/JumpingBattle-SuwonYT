@@ -354,7 +354,7 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                 SELECT booking.booking_date, booking.time_key, booking.room
                   FROM bookings AS booking
                   LEFT JOIN naver_booking_card_links AS link ON link.booking_row_id=booking.id
-                  LEFT JOIN naver_manual_stock_blocks AS manual ON manual.booking_row_id=booking.id
+                   LEFT JOIN naver_manual_stock_blocks AS manual ON manual.booking_row_id=booking.id
                  WHERE booking_date >= ?
                    AND booking_date <= date(?, '+14 days')
                    AND COALESCE(booking.completed, 0)=0

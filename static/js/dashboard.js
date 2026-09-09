@@ -1951,15 +1951,18 @@ async function copyCardInfo(buttonEl) {
 
 async function sendCardToGame(buttonEl) {
     const card = buttonEl ? buttonEl.closest('.booking-card') : null;
-    if (!card || card.dataset.manualNaverBlock === 'true') return;
+    if (!card || card.dataset.manualNaverBlock === 'true') return false;
 
     const cell = card.closest('td[id^="cell-"]');
-    const roomId = (cell?.id.split('-')[3] || '').toUpperCase();
+    // Always trust the card's current timetable cell, not a stale room-size
+    // label saved before a drag/drop move.
+    const roomId = (cell?.id.split('-').at(-1) || '').toUpperCase();
     const teamName = card.querySelector('.p-team-text')?.textContent.trim() || '';
     const meta = parseCardMetaText(card.querySelector('.p-level-people-text')?.textContent || '');
     const level = meta.level || '';
-    const paymentData = parsePaymentDataSafe(card.dataset.paymentData);
-    const roomFlags = paymentData?.roomFlags || roomFlagsFromLabel(meta.roomFlagLabel);
+    const paymentData = parsePaymentDataSafe(card.dataset.paymentData) || {};
+    const sourceFlags = paymentData.roomFlags || roomFlagsFromLabel(meta.roomFlagLabel);
+    const roomFlags = normalizeRoomFlagsForRoom(roomId, sourceFlags);
     let mapPrefix = '소형';
 
     if (roomId === 'B1' || roomId === 'B2') {
@@ -1967,14 +1970,30 @@ async function sendCardToGame(buttonEl) {
         const largeSelected = !!roomFlags?.L;
         if (mediumSelected === largeSelected) {
             showToast('B방은 모달에서 중 또는 대 중 하나를 선택한 뒤 전송해주세요.', card);
-            return;
+            return false;
         }
         mapPrefix = mediumSelected ? '중형' : '대형';
     }
 
+    // Persist the normalised size immediately. This makes a small-to-B move
+    // default to medium even if an older card still carries a small-room label.
+    const normalisedLabel = roomFlagLabelFromFlags(roomFlags);
+    if (JSON.stringify(paymentData.roomFlags || {}) !== JSON.stringify(roomFlags)
+        || paymentData.roomFlagLabel !== normalisedLabel) {
+        paymentData.roomFlags = roomFlags;
+        paymentData.roomFlagLabel = normalisedLabel;
+        card.dataset.paymentData = JSON.stringify(paymentData);
+        const metaEl = card.querySelector('.p-level-people-text');
+        if (metaEl) metaEl.innerHTML = buildCardMetaHtml(meta.level, meta.people, normalisedLabel);
+        updateCardView(card);
+        await saveCard(card);
+    }
+
+    console.info('[게임 전송] room=%s, mapPrefix=%s, level=%s', roomId, mapPrefix, level);
+
     if (!['C1', 'C2', 'B1', 'B2'].includes(roomId) || !teamName || !level || level === '미입력') {
         showToast('방, 팀명, 난이도를 모두 입력한 뒤 전송해주세요.', card);
-        return;
+        return false;
     }
 
     buttonEl.disabled = true;
@@ -1992,9 +2011,133 @@ async function sendCardToGame(buttonEl) {
         showToast(result.message || `${roomId} 방으로 전송 요청했습니다.`, card);
         buttonEl.title = '게임 프로그램 전송 요청됨';
         setTimeout(() => { buttonEl.title = '게임 프로그램에 팀명·난이도 전송'; }, 3000);
+        return true;
     } catch (error) {
         console.error('게임 프로그램 전송 요청 실패:', error);
         showToast(error.message || '게임 프로그램 전송 요청에 실패했습니다.', card);
+        return false;
+    } finally {
+        buttonEl.disabled = false;
+        buttonEl.classList.remove('is-command-pending');
+    }
+}
+
+function setGameActionButtonState(buttonEl, isRunning) {
+    if (!buttonEl) return;
+    buttonEl.dataset.gameRunning = isRunning ? 'true' : 'false';
+    buttonEl.classList.toggle('stop', isRunning);
+    buttonEl.classList.toggle('start', !isRunning);
+    buttonEl.title = isRunning ? '게임 정지' : '게임 시작';
+    buttonEl.innerHTML = isRunning
+        ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>'
+        : '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+}
+
+function setCardGameRunning(card, isRunning) {
+    if (!card) return;
+    const paymentData = parsePaymentDataSafe(card.dataset.paymentData) || {};
+    paymentData.gameRunning = !!isRunning;
+    card.dataset.paymentData = JSON.stringify(paymentData);
+    card.dataset.gameRunning = isRunning ? 'true' : 'false';
+    card.querySelector('.cell-view')?.classList.toggle('game-running', isRunning);
+    setGameActionButtonState(card.querySelector('.queue-game-btn'), isRunning);
+}
+
+async function toggleCardGame(buttonEl) {
+    const card = buttonEl ? buttonEl.closest('.booking-card') : null;
+    if (!card || card.dataset.manualNaverBlock === 'true') return;
+    const isStopping = buttonEl.dataset.gameRunning === 'true';
+    const action = isStopping ? 'stop-game' : 'start-game';
+    const actionLabel = isStopping ? '정지' : '시작';
+
+    if (isStopping) {
+        const cell = card.closest('td[id^="cell-"]');
+        const roomId = (cell?.id.split('-').at(-1) || '').toUpperCase();
+        if (!confirm(`${roomId} 방 게임을 정말 정지할까요?\n\n정지하면 진행 중인 게임이 종료됩니다.`)) {
+            return;
+        }
+    }
+
+    buttonEl.disabled = true;
+    buttonEl.classList.add('is-command-pending');
+    try {
+        const cell = card.closest('td[id^="cell-"]');
+        const roomId = (cell?.id.split('-').at(-1) || '').toUpperCase();
+        const response = await fetch(`/api/game-commands/${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomId }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+            if (!isStopping && result.code === 'game_already_running') {
+                setGameActionButtonState(buttonEl, true);
+            }
+            throw new Error(result.message || `게임 ${actionLabel} 요청에 실패했습니다.`);
+        }
+        if (isStopping) {
+            // Stopping the game does not undo its completed/grey card state.
+            setCardGameRunning(card, false);
+            await saveCard(card);
+        } else {
+            // A successful game start keeps the original completed-card flow,
+            // then adds a separate red outline while the game is running.
+            if (!card.querySelector('.p-completed')?.checked) {
+                card.querySelector('.p-completed').checked = true;
+                updateCardView(card);
+                updateCardQueueStatus(card);
+            }
+            setCardGameRunning(card, true);
+            await saveCard(card);
+        }
+        setGameActionButtonState(buttonEl, !isStopping);
+        showToast(result.message || `${roomId} 방 게임 ${actionLabel}을 요청했습니다.`, card);
+    } catch (error) {
+        console.error(`게임 ${actionLabel} 요청 실패:`, error);
+        showToast(error.message || `게임 ${actionLabel} 요청에 실패했습니다.`, card);
+    } finally {
+        buttonEl.disabled = false;
+        buttonEl.classList.remove('is-command-pending');
+    }
+}
+
+async function startCardGame(buttonEl) {
+    const card = buttonEl ? buttonEl.closest('.booking-card') : null;
+    if (!card || card.dataset.manualNaverBlock === 'true') return;
+
+    const completed = card.querySelector('.p-completed');
+    if (completed?.checked) {
+        markCompleted(buttonEl);
+        return;
+    }
+
+    buttonEl.disabled = true;
+    buttonEl.classList.add('is-command-pending');
+    try {
+        const cell = card.closest('td[id^="cell-"]');
+        const roomId = (cell?.id.split('-').at(-1) || '').toUpperCase();
+        const response = await fetch('/api/game-commands/start-game', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomId }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+            if (result.code === 'game_already_running') {
+                const shouldComplete = confirm(`${result.message || '이미 게임이 진행 중입니다.'}\n\n이 카드를 완료 처리할까요?`);
+                if (shouldComplete) {
+                    markCompleted(buttonEl);
+                    showToast('게임 진행 상태로 완료 처리했습니다.', card);
+                }
+                return;
+            }
+            throw new Error(result.message || '게임 시작 요청에 실패했습니다.');
+        }
+        markCompleted(buttonEl);
+        showToast(result.message || `${roomId} 게임 시작을 요청했습니다.`, card);
+    } catch (error) {
+        console.error('게임 시작 요청 실패:', error);
+        showToast(error.message || '게임 시작 요청에 실패했습니다.', card);
     } finally {
         buttonEl.disabled = false;
         buttonEl.classList.remove('is-command-pending');
@@ -4832,9 +4975,10 @@ function createBookingCard() {
                 <div class="p-payment-text"><span class="p-paid-status queue-transfer-status" style="color:#d32f2f;">결제미완료</span><span class="p-payment-amounts"></span>
                     <div class="booking-status">
                         <div class="queue-action-row">
-                            <button class="queue-transfer-btn" onclick="event.stopPropagation(); sendCardToGame(this)" title="게임 프로그램에 팀명·난이도 전송"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
                             <button class="queue-copy-btn" onclick="event.stopPropagation(); copyCardInfo(this)" title="복사"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></button>
-                            <button class="queue-complete-btn" onclick="event.stopPropagation(); markCompleted(this)" title="완료"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+                            <button class="queue-transfer-btn" onclick="event.stopPropagation(); sendCardToGame(this)" title="게임 프로그램에 팀명·난이도 전송"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+                            <button class="queue-game-btn start" onclick="event.stopPropagation(); toggleCardGame(this)" title="게임 시작"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg></button>
+                            <button class="queue-finish-btn" onclick="event.stopPropagation(); markCompleted(this)" title="완료 처리"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg></button>
                         </div>
                     </div>
                 </div>
@@ -4932,6 +5076,7 @@ function updateCard(card, b) {
         card.dataset.paymentData = '';
     }
     updateCardView(card);
+    setCardGameRunning(card, parsedPaymentData?.gameRunning === true);
     updateCardQueueStatus(card);
     
     // 팀카드 배지 초기화 (DB 로드 시점)
@@ -5036,13 +5181,22 @@ function updateCardView(card) {
     view.classList.toggle('completed', isCompleted);
 
     // 완료 상태에 따라 버튼 기능/아이콘/색상 전환
+    const finishBtn = card.querySelector('.queue-finish-btn');
+    if (finishBtn) {
+        finishBtn.classList.toggle('restore', isCompleted);
+        finishBtn.title = isCompleted ? '원복' : '완료 처리';
+        finishBtn.innerHTML = isCompleted
+            ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>'
+            : '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>';
+    }
+
     const completeBtn = card.querySelector('.queue-complete-btn');
     if (completeBtn) {
         completeBtn.classList.toggle('restore', isCompleted);
-        completeBtn.title = isCompleted ? '원복' : '완료';
+        completeBtn.title = isCompleted ? '원복' : '게임 시작';
         completeBtn.innerHTML = isCompleted
             ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>'
-            : '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+            : '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>';
     }
 
     if (paidStatus) {

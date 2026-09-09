@@ -12,7 +12,7 @@ const STOCK_STATE_KEY = "naver-stock-closed-by-extension";
 const NAVER_WRITE_AUTH_KEY = "naver-write-auth";
 const EXPECTED_STOCK_WRITE_KEY = "expected-extension-stock-writes";
 const KST_TIME_ZONE = "Asia/Seoul";
-const EXTENSION_BUILD = "suwonyt-manual-stock-reconcile-20260901-02";
+const EXTENSION_BUILD = "suwonyt-reservation-form-fix-20260909-01";
 let roomItemIdsCache = null;
 let roomItemIdsCacheAt = 0;
 let stockEventWatcherRunning = false;
@@ -109,10 +109,17 @@ async function fetchBookings(itemId, startIso, endIso) {
 }
 
 function customAnswer(booking, pattern) {
-  const forms = booking?.snapshotJson?.customFormInputJson;
+  const rawForms = booking?.snapshotJson?.customFormInputJson;
+  let forms = rawForms;
+  if (typeof rawForms === "string") {
+    try { forms = JSON.parse(rawForms); } catch { forms = []; }
+  }
   if (!Array.isArray(forms)) return "";
-  const match = forms.find(form => pattern.test(String(form?.title || form?.originalTitle || "")));
-  return String(match?.value || "").trim();
+  const match = forms.find(form => pattern.test(String(
+    form?.title || form?.originalTitle || form?.label || form?.question || ""
+  )));
+  const value = match?.value ?? match?.answer ?? match?.inputValue ?? match?.selectedValue ?? "";
+  return Array.isArray(value) ? value.map(String).join(", ").trim() : String(value).trim();
 }
 
 function mapBooking(booking) {
@@ -137,8 +144,10 @@ function mapBooking(booking) {
     status: cancelled ? "취소" : (completed ? "사용완료" : "확정"),
     name: String(booking?.name || booking?.snapshotJson?.name || "").trim(),
     phone: String(booking?.phone || booking?.snapshotJson?.phone || "").trim(),
-    teamName: customAnswer(booking, /팀\s*명/i),
-    difficulty: customAnswer(booking, /난이도/),
+    // Keep the question labels escaped so this critical matcher cannot be
+    // corrupted by a Windows code-page save.
+    teamName: customAnswer(booking, new RegExp("\\ud300\\s*\\uba85", "i")),
+    difficulty: customAnswer(booking, new RegExp("\\ub09c\\uc774\\ub3c4", "i")),
     totalCount: people
   };
 }
@@ -184,7 +193,8 @@ async function syncReservations(force = false) {
   console.info("[SuwonYT Naver] reservation summary", [...byId.values()].map(item => ({
     when: item.when,
     status: item.status,
-    product: item.product
+    product: item.product,
+    difficulty: item.difficulty || "(not selected)"
   })));
   const delivery = await sendChangedBookings([...byId.values()], force);
   console.info("[SuwonYT Naver] synchronized", {
