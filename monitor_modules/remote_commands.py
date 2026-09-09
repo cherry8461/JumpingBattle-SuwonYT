@@ -48,11 +48,11 @@ def _normalise_level_key(value):
 
 def _normalise_map_size(value):
     text = str(value or "").replace(" ", "").casefold()
-    if text in {"small", "\uc18c\ud615"}:
+    if "small" in text or "\uc18c\ud615" in text:
         return "small"
-    if text in {"medium", "\uc911\ud615"}:
+    if "medium" in text or "\uc911\ud615" in text:
         return "medium"
-    if text in {"large", "\ub300\ud615"}:
+    if "large" in text or "\ub300\ud615" in text:
         return "large"
     return ""
 LEVEL_ALIASES = {
@@ -314,6 +314,9 @@ def create_remote_commands_blueprint(socketio, get_connection):
     def request_start_game():
         body = request.get_json(silent=True) or {}
         room_id = str(body.get("roomId") or "").upper().strip()
+        expected_level = _normalise_level_key(body.get("level"))
+        expected_size = _normalise_map_size(body.get("mapSize"))
+        force_start = bool(body.get("force"))
         if room_id not in ROOM_IDS:
             return jsonify(success=False, message="방 정보를 확인해주세요."), 400
 
@@ -342,6 +345,27 @@ def create_remote_commands_blueprint(socketio, get_connection):
                     success=False,
                     code="game_already_running",
                     message=f"{room_id} 방은 이미 게임이 진행 중입니다.",
+                ), 409
+
+            # The card holds the intended team/map. The bridge reports the
+            # manager's currently selected values. Never start silently when
+            # those values differ; the dashboard must explicitly approve it.
+            manager_map = str(state.get("mapName") or "").strip()
+            manager_level = _normalise_level_key(manager_map)
+            manager_size = _normalise_map_size(manager_map)
+            mismatch_fields = []
+            if expected_level and manager_level and expected_level != manager_level:
+                mismatch_fields.append("level")
+            if expected_size and manager_size and expected_size != manager_size:
+                mismatch_fields.append("mapSize")
+            if mismatch_fields and not force_start:
+                return jsonify(
+                    success=False,
+                    code="manager_settings_mismatch",
+                    message="현재 설정된 난이도가 맞지 않습니다.",
+                    mismatchFields=mismatch_fields,
+                    expected={"level": expected_level, "mapSize": expected_size},
+                    manager={"mapName": manager_map, "level": manager_level, "mapSize": manager_size},
                 ), 409
 
             command_id = uuid.uuid4().hex

@@ -3123,3 +3123,44 @@ span:has(#childPrice) {
 
 /* 모달 하단 버튼 영역 */
 .modal-buttons-right { display: flex; gap: 10px; }
+
+/* 게임 시작 전 설정 불일치 확인창: 해당 게임카드 바로 위에 표시한다. */
+.game-setting-mismatch-popup {
+    position: fixed;
+    z-index: 10050;
+    width: 270px;
+    padding: 13px 14px 12px;
+    background: #fff;
+    border: 1px solid #94a3b8;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .25);
+    color: #1e293b;
+    font-size: 13px;
+    line-height: 1.45;
+}
+.game-setting-mismatch-title { font-weight: 800; margin-bottom: 8px; }
+.game-setting-mismatch-line { white-space: nowrap; }
+.game-setting-mismatch-label { font-weight: 700; }
+.setting-mismatch-value { color: #dc2626; font-weight: 900; }
+.game-setting-mismatch-question { margin-top: 10px; font-weight: 700; }
+.game-setting-mismatch-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.game-setting-mismatch-actions button { min-width: 56px; padding: 6px 12px; border-radius: 5px; border: 1px solid #94a3b8; font-weight: 800; cursor: pointer; }
+.game-setting-mismatch-confirm { color: #fff; background: #1d4ed8; border-color: #1d4ed8 !important; }
+.game-setting-mismatch-cancel { color: #334155; background: #fff; }
+
+/* 게임 정지 확인: 시작 설정 확인창과 동일하게 해당 카드 바로 위에 표시한다. */
+.game-card-confirm-popup {
+    position: fixed;
+    z-index: 10050;
+    width: 250px;
+    padding: 13px 14px 12px;
+    background: #fff;
+    border: 1px solid #94a3b8;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .25);
+    color: #1e293b;
+    font-size: 13px;
+    line-height: 1.45;
+}
+.game-card-confirm-title { font-weight: 800; margin-bottom: 7px; }
+.game-card-confirm-message { color: #475569; }

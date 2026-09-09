@@ -271,14 +271,17 @@ async function refreshWalkInList() {
                 card.querySelector('.info span:nth-of-type(2)').textContent = details;
 
                 // 🎯 네이버 버튼 클릭 시 작동하는 검문 구역
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     
                     // 🚨 [파티룸 예약 사전 검사 가드]
                     // 데이터의 roomSize(또는 백엔드에서 준 room 값)에 '파티룸'이 포함되어 있는지 검사합니다.
                     if (roomSize.includes('파티룸') || (item.room && item.room.includes('파티룸'))) {
                         
-                        // 브라우저 기본 확인창을 띄워 알바생의 실수를 예방합니다.
-                        const isTimeChecked = confirm(`⚠️ [파티룸 예약 시간 확인] : ${item.time}\n\n해당 예약은 '파티룸' 건입니다.\n수동 입력 필요함!`);
+                        const isTimeChecked = await showGameCardConfirmPopup(
+                            card,
+                            `파티룸 예약 시간 확인 : ${item.time}`,
+                            "해당 예약은 파티룸 건입니다. 수동 입력이 필요합니다."
+                        );
                         
                         // [취소]를 누르면 입력 처리를 중단하고 워크인 박스에 그대로 놔둡니다.
                         if (!isTimeChecked) {
@@ -2043,6 +2046,156 @@ function setCardGameRunning(card, isRunning) {
     setGameActionButtonState(card.querySelector('.queue-game-btn'), isRunning);
 }
 
+function getCardStartExpectation(card, roomId) {
+    const meta = parseCardMetaText(card.querySelector('.p-level-people-text')?.textContent || '');
+    const paymentData = parsePaymentDataSafe(card.dataset.paymentData) || {};
+    const sourceFlags = paymentData.roomFlags || roomFlagsFromLabel(meta.roomFlagLabel);
+    const roomFlags = normalizeRoomFlagsForRoom(roomId, sourceFlags);
+    let mapSize = 'small';
+    if (roomId === 'B1' || roomId === 'B2') {
+        mapSize = roomFlags?.M ? 'medium' : (roomFlags?.L ? 'large' : '');
+    }
+    return {
+        level: meta.level || '',
+        mapSize,
+    };
+}
+
+function showGameSettingMismatchPopup(card, details) {
+    return new Promise((resolve) => {
+        document.getElementById('gameSettingMismatchPopup')?.remove();
+
+        const mismatchFields = new Set(details.mismatchFields || []);
+        const managerParts = String(details.managerMap || '-').split(/\s*-\s*/);
+        const managerSize = managerParts.shift() || '-';
+        const managerLevel = managerParts.join(' - ') || '-';
+        const dashboardSize = details.dashboardSize || '-';
+        const dashboardLevel = details.dashboardLevel || '-';
+        const popup = document.createElement('div');
+        popup.id = 'gameSettingMismatchPopup';
+        popup.className = 'game-setting-mismatch-popup';
+
+        const title = document.createElement('div');
+        title.className = 'game-setting-mismatch-title';
+        title.textContent = '현재 설정된 난이도가 맞지 않습니다.';
+        popup.appendChild(title);
+
+        const makeLine = (label, size, level) => {
+            const line = document.createElement('div');
+            line.className = 'game-setting-mismatch-line';
+            const labelEl = document.createElement('span');
+            labelEl.className = 'game-setting-mismatch-label';
+            labelEl.textContent = `${label} : `;
+            const sizeEl = document.createElement('span');
+            sizeEl.className = mismatchFields.has('mapSize') ? 'setting-mismatch-value' : '';
+            sizeEl.textContent = size;
+            const divider = document.createTextNode(' - ');
+            const levelEl = document.createElement('span');
+            levelEl.className = mismatchFields.has('level') ? 'setting-mismatch-value' : '';
+            levelEl.textContent = level;
+            line.append(labelEl, sizeEl, divider, levelEl);
+            return line;
+        };
+        popup.appendChild(makeLine('점핑프로그램', managerSize, managerLevel));
+        popup.appendChild(makeLine('대시보드', dashboardSize, dashboardLevel));
+
+        const question = document.createElement('div');
+        question.className = 'game-setting-mismatch-question';
+        question.textContent = '그대로 시작하시겠습니까?';
+        popup.appendChild(question);
+
+        const actions = document.createElement('div');
+        actions.className = 'game-setting-mismatch-actions';
+        const confirmButton = document.createElement('button');
+        confirmButton.type = 'button';
+        confirmButton.className = 'game-setting-mismatch-confirm';
+        confirmButton.textContent = '예';
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button';
+        cancelButton.className = 'game-setting-mismatch-cancel';
+        cancelButton.textContent = '취소';
+        actions.append(confirmButton, cancelButton);
+        popup.appendChild(actions);
+
+        const close = (approved) => {
+            document.removeEventListener('keydown', onKeyDown);
+            popup.remove();
+            resolve(approved);
+        };
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') close(false);
+            if (event.key === 'Enter') close(true);
+        };
+        confirmButton.addEventListener('click', () => close(true));
+        cancelButton.addEventListener('click', () => close(false));
+        document.addEventListener('keydown', onKeyDown);
+        document.body.appendChild(popup);
+
+        const rect = card.getBoundingClientRect();
+        const popupRect = popup.getBoundingClientRect();
+        const left = Math.min(Math.max(8, rect.left + (rect.width - popupRect.width) / 2), window.innerWidth - popupRect.width - 8);
+        const top = Math.max(8, rect.top - popupRect.height - 10);
+        popup.style.left = `${left}px`;
+        popup.style.top = `${top}px`;
+        confirmButton.focus();
+    });
+}
+
+function showGameCardConfirmPopup(anchorElement, titleText, messageText) {
+    return new Promise((resolve) => {
+        document.getElementById('gameCardConfirmPopup')?.remove();
+        const popup = document.createElement('div');
+        popup.id = 'gameCardConfirmPopup';
+        popup.className = 'game-card-confirm-popup';
+
+        const title = document.createElement('div');
+        title.className = 'game-card-confirm-title';
+        title.textContent = titleText;
+        const message = document.createElement('div');
+        message.className = 'game-card-confirm-message';
+        message.textContent = messageText;
+        const actions = document.createElement('div');
+        actions.className = 'game-setting-mismatch-actions';
+        const confirmButton = document.createElement('button');
+        confirmButton.type = 'button';
+        confirmButton.className = 'game-setting-mismatch-confirm';
+        confirmButton.textContent = '예';
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button';
+        cancelButton.className = 'game-setting-mismatch-cancel';
+        cancelButton.textContent = '취소';
+        actions.append(confirmButton, cancelButton);
+        popup.append(title, message, actions);
+
+        const close = (approved) => {
+            document.removeEventListener('keydown', onKeyDown);
+            popup.remove();
+            resolve(approved);
+        };
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') close(false);
+            if (event.key === 'Enter') close(true);
+        };
+        confirmButton.addEventListener('click', () => close(true));
+        cancelButton.addEventListener('click', () => close(false));
+        document.addEventListener('keydown', onKeyDown);
+        document.body.appendChild(popup);
+
+        const anchor = anchorElement instanceof Element ? anchorElement : document.activeElement;
+        const rect = anchor?.getBoundingClientRect?.() || {
+            left: window.innerWidth / 2,
+            top: window.innerHeight / 2,
+            width: 0,
+        };
+        const popupRect = popup.getBoundingClientRect();
+        const left = Math.min(Math.max(8, rect.left + (rect.width - popupRect.width) / 2), window.innerWidth - popupRect.width - 8);
+        const top = Math.max(8, rect.top - popupRect.height - 10);
+        popup.style.left = `${left}px`;
+        popup.style.top = `${top}px`;
+        confirmButton.focus();
+    });
+}
+
 async function toggleCardGame(buttonEl) {
     const card = buttonEl ? buttonEl.closest('.booking-card') : null;
     if (!card || card.dataset.manualNaverBlock === 'true') return;
@@ -2053,7 +2206,12 @@ async function toggleCardGame(buttonEl) {
     if (isStopping) {
         const cell = card.closest('td[id^="cell-"]');
         const roomId = (cell?.id.split('-').at(-1) || '').toUpperCase();
-        if (!confirm(`${roomId} 방 게임을 정말 정지할까요?\n\n정지하면 진행 중인 게임이 종료됩니다.`)) {
+        const proceed = await showGameCardConfirmPopup(
+            card,
+            `${roomId} 방 게임을 정말 정지할까요?`,
+            '정지하면 진행 중인 게임이 종료됩니다.'
+        );
+        if (!proceed) {
             return;
         }
     }
@@ -2063,12 +2221,30 @@ async function toggleCardGame(buttonEl) {
     try {
         const cell = card.closest('td[id^="cell-"]');
         const roomId = (cell?.id.split('-').at(-1) || '').toUpperCase();
-        const response = await fetch(`/api/game-commands/${action}`, {
+        const startExpectation = isStopping ? {} : getCardStartExpectation(card, roomId);
+        const requestGameAction = async (force = false) => fetch(`/api/game-commands/${action}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ roomId }),
+            body: JSON.stringify({ roomId, ...startExpectation, force }),
         });
-        const result = await response.json().catch(() => ({}));
+        let response = await requestGameAction();
+        let result = await response.json().catch(() => ({}));
+        if (!isStopping && result.code === 'manager_settings_mismatch') {
+            const currentMap = String(result.manager?.mapName || '-').replace(/\s*-\s*/g, ' - ');
+            const expectedLevelKey = String(result.expected?.level || startExpectation.level || '-');
+            const expectedLevel = expectedLevelKey === '-' ? '-' : `${expectedLevelKey.charAt(0).toUpperCase()}${expectedLevelKey.slice(1).toLowerCase()}`;
+            const expectedSize = result.expected?.mapSize || startExpectation.mapSize || '';
+            const sizeLabel = ({ small: '소형', medium: '중형', large: '대형' })[expectedSize] || expectedSize || '-';
+            const proceed = await showGameSettingMismatchPopup(card, {
+                managerMap: currentMap,
+                dashboardSize: sizeLabel,
+                dashboardLevel: expectedLevel,
+                mismatchFields: result.mismatchFields || [],
+            });
+            if (!proceed) return;
+            response = await requestGameAction(true);
+            result = await response.json().catch(() => ({}));
+        }
         if (!response.ok || !result.success) {
             if (!isStopping && result.code === 'game_already_running') {
                 setGameActionButtonState(buttonEl, true);
@@ -2095,49 +2271,6 @@ async function toggleCardGame(buttonEl) {
     } catch (error) {
         console.error(`게임 ${actionLabel} 요청 실패:`, error);
         showToast(error.message || `게임 ${actionLabel} 요청에 실패했습니다.`, card);
-    } finally {
-        buttonEl.disabled = false;
-        buttonEl.classList.remove('is-command-pending');
-    }
-}
-
-async function startCardGame(buttonEl) {
-    const card = buttonEl ? buttonEl.closest('.booking-card') : null;
-    if (!card || card.dataset.manualNaverBlock === 'true') return;
-
-    const completed = card.querySelector('.p-completed');
-    if (completed?.checked) {
-        markCompleted(buttonEl);
-        return;
-    }
-
-    buttonEl.disabled = true;
-    buttonEl.classList.add('is-command-pending');
-    try {
-        const cell = card.closest('td[id^="cell-"]');
-        const roomId = (cell?.id.split('-').at(-1) || '').toUpperCase();
-        const response = await fetch('/api/game-commands/start-game', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ roomId }),
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || !result.success) {
-            if (result.code === 'game_already_running') {
-                const shouldComplete = confirm(`${result.message || '이미 게임이 진행 중입니다.'}\n\n이 카드를 완료 처리할까요?`);
-                if (shouldComplete) {
-                    markCompleted(buttonEl);
-                    showToast('게임 진행 상태로 완료 처리했습니다.', card);
-                }
-                return;
-            }
-            throw new Error(result.message || '게임 시작 요청에 실패했습니다.');
-        }
-        markCompleted(buttonEl);
-        showToast(result.message || `${roomId} 게임 시작을 요청했습니다.`, card);
-    } catch (error) {
-        console.error('게임 시작 요청 실패:', error);
-        showToast(error.message || '게임 시작 요청에 실패했습니다.', card);
     } finally {
         buttonEl.disabled = false;
         buttonEl.classList.remove('is-command-pending');
@@ -2441,7 +2574,12 @@ function getManualNaverBlockCard(cell) {
 async function clearManualNaverBlockForDrop(targetCell, label) {
     const manualCard = getManualNaverBlockCard(targetCell);
     if (!manualCard) return true;
-    if (!confirm(`네이버 수동 마감 칸을 ${label || '이 팀'} 정보로 교체할까요?\n기존 회색 카드는 대시보드에서 삭제됩니다.`)) {
+    const shouldReplace = await showGameCardConfirmPopup(
+        manualCard,
+        `네이버 수동 마감을 ${label || '이 팀'} 정보로 교체할까요?`,
+        '기존 회색 카드는 대시보드에서 삭제됩니다.'
+    );
+    if (!shouldReplace) {
         return false;
     }
     const bid = parseInt(manualCard.dataset.bid || '0', 10);
@@ -4166,7 +4304,12 @@ async function deleteSupplyHistoryEntry(index) {
     }
 
     if (!Number.isInteger(index) || index < 0 || index >= supplyHistoryEntries.length) return;
-    if (!confirm("해당 판매 내역을 삭제하시겠습니까?")) return;
+    const shouldDelete = await showGameCardConfirmPopup(
+        document.activeElement,
+        '해당 판매 내역을 삭제할까요?',
+        '삭제 후에는 복구할 수 없습니다.'
+    );
+    if (!shouldDelete) return;
 
     supplyHistoryEntries.splice(index, 1);
     window.supplyHistoryEntries = supplyHistoryEntries;
