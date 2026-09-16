@@ -1874,8 +1874,14 @@ def get_teams():
     
     # 2. [핵심 수정] WHERE booking_date = ? 절을 추가하여 해당 날짜 데이터만 가져옵니다.
     cur.execute("""
-        SELECT * FROM bookings 
-        WHERE booking_date = ? 
+        SELECT * FROM bookings
+        WHERE booking_date = ?
+          AND NOT EXISTS (
+              SELECT 1
+                FROM naver_booking_card_links AS hidden_link
+               WHERE hidden_link.booking_row_id=bookings.id
+                 AND hidden_link.card_state='cancelled_hidden'
+          )
         ORDER BY time_key ASC, room ASC, COALESCE(order_no, 0) ASC, id ASC
     """, (target_date,))
     
@@ -1959,7 +1965,17 @@ def get_settlement_overview():
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT id, booking_date, time_key, room, name, phone, team, people, paid, completed, payment_data FROM bookings WHERE booking_date=? ORDER BY time_key, room, COALESCE(order_no, 0), id",
+        '''SELECT id, booking_date, time_key, room, name, phone, team, people,
+                  paid, completed, payment_data
+             FROM bookings
+            WHERE booking_date=?
+              AND NOT EXISTS (
+                  SELECT 1
+                    FROM naver_booking_card_links AS hidden_link
+                   WHERE hidden_link.booking_row_id=bookings.id
+                     AND hidden_link.card_state='cancelled_hidden'
+              )
+            ORDER BY time_key, room, COALESCE(order_no, 0), id''',
         (target_date,)
     )
     booking_rows = [dict(r) for r in cur.fetchall()]
@@ -2726,7 +2742,17 @@ def get_naver_reservation_list():
                    customer_name, team_name, difficulty, phone, people_count,
                    first_seen_at, reservation.updated_at, cancelled_at,
                    COALESCE(link.handling_mode, 'standard') AS handling_mode,
-                   COALESCE(link.card_state, '') AS card_state
+                   COALESCE(link.card_state, '') AS card_state,
+                   EXISTS(
+                       SELECT 1
+                         FROM naver_customer_cancellation_emails AS customer_cancel
+                        WHERE customer_cancel.booking_id=reservation.booking_id
+                   ) AS is_customer_cancel,
+                   EXISTS(
+                       SELECT 1
+                         FROM naver_cancellation_events AS same_day_cancel
+                        WHERE same_day_cancel.booking_id=reservation.booking_id
+                   ) AS is_same_day_cancel
               FROM naver_reservations AS reservation
               LEFT JOIN naver_booking_card_links AS link ON link.booking_id=reservation.booking_id
              WHERE reservation.use_date=?
@@ -2739,7 +2765,13 @@ def get_naver_reservation_list():
         {
             'booking_id': row[0],
             'status': row[1],
-            'status_label': '현장 결제 전환' if row[13] == 'onsite_payment' else status_labels.get(row[1], row[1]),
+            'status_label': (
+                '현장 결제 전환' if row[13] == 'onsite_payment'
+                else '고객당일취소' if row[16]
+                else '고객사전취소' if row[15]
+                else status_labels.get(row[1], row[1])
+            ),
+            'cancellation_type': 'same_day' if row[16] else ('customer' if row[15] else ''),
             'handling_mode': row[13],
             'card_state': row[14],
             'time': str(row[2] or '').replace('-', ':'),
@@ -3847,10 +3879,39 @@ def get_pad_status():
     대시보드에서 방 상태(룸 카드)를 표시하기 위한 API
     현재 게임 상태, 팀 정보, 시간 등을 반환합니다.
     """
+    manager_states = {}
+    conn = sqlite3.connect(DB_FILE, timeout=5)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            '''SELECT room_id, capabilities_json
+                 FROM room_agents AS agent
+                WHERE status='online'
+                  AND updated_at=(
+                      SELECT MAX(newest.updated_at)
+                        FROM room_agents AS newest
+                       WHERE newest.room_id=agent.room_id
+                         AND newest.status='online'
+                  )'''
+        ).fetchall()
+        for row in rows:
+            room_id = str(row['room_id'] or '').upper().strip()
+            if room_id not in {'C1', 'C2', 'B1', 'B2'}:
+                continue
+            state = _parse_payment_data_safe(row['capabilities_json'])
+            manager_states[room_id] = {
+                'teamName': str(state.get('teamName') or '').strip()[:10],
+                'mapName': str(state.get('mapName') or '').strip()[:120],
+                'level': str(state.get('level') or '').strip()[:80],
+            }
+    finally:
+        conn.close()
+
     return jsonify({
         "map": PAD_MAP,
         "status": pad_status,
-        "data": pad_data
+        "data": pad_data,
+        "manager": manager_states,
     })
 
 

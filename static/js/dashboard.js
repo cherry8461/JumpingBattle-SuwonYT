@@ -2299,6 +2299,13 @@ async function toggleCardGame(buttonEl) {
             await saveCard(card);
         }
         setGameActionButtonState(buttonEl, !isStopping);
+        if (!isStopping) {
+            // The bridge continuously mirrors the Manager fields. Refresh
+            // after the start request so the room panel shows those actual
+            // values rather than the timetable card values.
+            setTimeout(fetchRoomStatus, 250);
+            setTimeout(fetchRoomStatus, 1000);
+        }
         showToast(result.message || `${roomId} 방 게임 ${actionLabel}을 요청했습니다.`, card);
     } catch (error) {
         console.error(`게임 ${actionLabel} 요청 실패:`, error);
@@ -3430,7 +3437,10 @@ function renderRoomStatus(apiData) {
                     <span class="room-state"></span>
                 </div>
                 <div class="room-card-body">
-                    <div class="team-text"></div>
+                    <div class="manager-info-line">
+                        <div class="manager-team-text"></div>
+                        <div class="team-text"></div>
+                    </div>
                     <div class="time-text" style="color: #d32f2f; font-weight: bold;"></div>
                 </div>
             `;
@@ -3445,6 +3455,7 @@ function renderRoomStatus(apiData) {
         const hasRoomInfo = !!info;
         let stateText = "비어있음 ⚪";
         let stateClass = "";
+        let managerTeamText = "";
         let teamText = "대기중";
         let timeText = "-";
         
@@ -3484,12 +3495,40 @@ function renderRoomStatus(apiData) {
             }
 
             timeText = buildRoomCountdownText(expectedEndMs);
-            teamText = `레벨: ${info.data.level || '-'}`;
+            const managerState = apiData.manager?.[room] || {};
+            managerTeamText = String(managerState.teamName || '').trim();
+            const managerMapName = String(managerState.mapName || '').trim();
+            const managerMapParts = managerMapName.split('-');
+            const sizeAliases = { small: '소형', medium: '중형', large: '대형' };
+            const levelAliases = {
+                basic: '베이직', easy: '이지', normal: '노멀', hard: '하드',
+                challenger: '챌린저', space: '우주', summer: '여름', kids: '유아', santa: '산타'
+            };
+            const rawSize = managerMapParts.length > 1 ? managerMapParts[0].trim() : '';
+            const rawLevel = managerMapParts.length > 1
+                ? managerMapParts.slice(1).join('-').trim()
+                : String(managerState.level || info.data.level || '').trim();
+            const managerSize = sizeAliases[rawSize.toLowerCase()] || rawSize;
+            const levelKey = rawLevel.replace(/맵$/u, '').trim();
+            const managerLevel = levelAliases[levelKey.toLowerCase()] || levelKey;
+            teamText = managerSize && managerLevel
+                ? `${managerSize}-${managerLevel}`
+                : (managerLevel || managerSize || '-');
         } else if (info && info.status === "wait_rank") {
             newStatus = "wait_rank";
             stateText = "랭킹 대기 🟡";
             stateClass = "wait_rank";
             teamText = "게임 종료 (랭킹 등록 대기)";
+            // The game may have been stopped directly in Jumping Manager.
+            // Keep timetable cards in sync so their stale stop button does
+            // not send a second stop command to a game that already ended.
+            document.querySelectorAll(`td[id$="-${room}"] .booking-card .queue-game-btn[data-game-running="true"]`).forEach(gameButton => {
+                const bookingCard = gameButton.closest('.booking-card');
+                if (!bookingCard) return;
+                setCardGameRunning(bookingCard, false);
+                setGameActionButtonState(gameButton, false);
+                saveCard(bookingCard).catch(error => console.error('게임 정지 상태 동기화 저장 실패:', error));
+            });
             delete card.dataset.expectedEndMs;
             clearStoredExpectedEndMs(room);
         } else {
@@ -3507,6 +3546,7 @@ function renderRoomStatus(apiData) {
 
         card.className = `room-card ${stateClass}`;
         card.querySelector('.room-state').innerHTML = stateText;
+        card.querySelector('.manager-team-text').textContent = managerTeamText;
         card.querySelector('.team-text').textContent = teamText;
         card.querySelector('.time-text').innerHTML = timeText;
     });
@@ -3820,6 +3860,27 @@ function onDepositCheckboxChange() {
     }
     updateBookerBadgeAndCheckbox(isChecked);
     calculatePayment();
+}
+
+function syncCardExtraBadges(card, paymentData) {
+    if (!card) return;
+    const badgeWrap = card.querySelector('.team-card-badge-wrap');
+    if (!badgeWrap) return;
+
+    badgeWrap.querySelectorAll('.team-card-extra-badge').forEach((badge) => badge.remove());
+
+    if (paymentData?.stampChecked) {
+        const stampBadge = document.createElement('span');
+        stampBadge.className = 'team-card-extra-badge stamp-complete-badge';
+        stampBadge.textContent = '도장완료';
+        badgeWrap.appendChild(stampBadge);
+    }
+    if (paymentData?.phoneChecked) {
+        const phoneBadge = document.createElement('span');
+        phoneBadge.className = 'team-card-extra-badge phone-complete-badge';
+        phoneBadge.textContent = '전화';
+        badgeWrap.appendChild(phoneBadge);
+    }
 }
 
 function buildCardPaymentHtml(paymentData) {
@@ -5472,6 +5533,7 @@ function updateCardView(card) {
     const hasSlotDuplicate = paymentData?.reservationSlotDuplicate === true;
     const hasDelayConflict = isReservationCard && delayMin > 0;
     setTeamCardBookerBadge(card, isReservationCard, paymentData?.reservationTime || getReservationTimeFromCard(card));
+    syncCardExtraBadges(card, paymentData);
     if (conflictEl) {
         if (hasSlotDuplicate) {
             conflictEl.textContent = '타임중복';
@@ -6497,6 +6559,8 @@ function openPaymentModalFromTimeline(cellView) {
     document.getElementById("childPassCount").value = paymentData?.childPass || "";
     document.getElementById("depositPaid").checked = !!paymentData?.depositPaid;
     document.getElementById("partyRoom").checked = !!paymentData?.partyRoom;
+    document.getElementById("stampChecked").checked = !!paymentData?.stampChecked;
+    document.getElementById("phoneChecked").checked = !!paymentData?.phoneChecked;
     document.getElementById("nonCardAdultCount").value = paymentData?.nonCardAdultCount || "";
     document.getElementById("cardInput").value = paymentData?.cardInput || "";
     document.getElementById("cashInput").value = paymentData?.cashInput || "";
@@ -6562,6 +6626,8 @@ function openPaymentModal(queueItem) {
     document.getElementById("childPassCount").value = paymentData?.childPass || "";
     document.getElementById("depositPaid").checked = paymentData?.depositPaid || false;
     document.getElementById("partyRoom").checked = !!paymentData?.partyRoom;
+    document.getElementById("stampChecked").checked = !!paymentData?.stampChecked;
+    document.getElementById("phoneChecked").checked = !!paymentData?.phoneChecked;
     document.getElementById("nonCardAdultCount").value = paymentData?.nonCardAdultCount || "";
     
     document.getElementById("cardInput").value = paymentData?.cardInput || "";
@@ -7130,6 +7196,8 @@ async function savePaymentInfo(closeAfterSave = true) {
     const couponCount = Math.max(couponCountRaw, 0);
     const depositPaid = document.getElementById("depositPaid").checked;
     const partyRoom = !!document.getElementById("partyRoom")?.checked;
+    const stampChecked = !!document.getElementById("stampChecked")?.checked;
+    const phoneChecked = !!document.getElementById("phoneChecked")?.checked;
     const roomFlags = getRoomFlagsFromModal();
     const roomFlagLabel = roomFlagLabelFromFlags(roomFlags);
     const depositAmount = depositPaid ? 5000 : 0;
@@ -7194,6 +7262,8 @@ async function savePaymentInfo(closeAfterSave = true) {
         naverDepositCancelledByStaff: !!basePaymentData?.naverDepositCancelledByStaff,
         reservationTime,
         partyRoom,
+        stampChecked,
+        phoneChecked,
         roomFlags,
         roomFlagLabel,
         depositAmount,

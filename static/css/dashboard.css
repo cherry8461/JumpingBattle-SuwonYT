@@ -1798,8 +1798,9 @@
             left: -14px;
             z-index: 10;
             pointer-events: none;
-            display: inline-block;
-            transform: rotate(-5deg);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
             white-space: nowrap;
         }
         .team-card-live-badge-wrap {
@@ -1833,6 +1834,29 @@
             opacity: 1;
         }
 
+        .team-card-extra-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 15px;
+            padding: 4px 7px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 900;
+            line-height: 1;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+        }
+        .team-card-extra-badge.stamp-complete-badge {
+            color: #6d28d9;
+            background: #ede9fe;
+            border: 1px solid #c4b5fd;
+        }
+        .team-card-extra-badge.phone-complete-badge {
+            color: #075985;
+            background: #e0f2fe;
+            border: 1px solid #7dd3fc;
+        }
+
         /* 실시간 종료 뱃지 스타일 (차분한 그레이) */
         .p-res-badge-item.type-end {
             color: #111827;
@@ -1852,6 +1876,8 @@
 
         .team-card-badge-overlay.payment-booker-badge {
             position: static;
+            transform: rotate(-5deg);
+            transform-origin: center;
             font-size: 12px;
             font-weight: 800;
             line-height: 1;
@@ -1859,9 +1885,7 @@
             padding: 4px 8px;
         }
         .team-card-delay-overlay {
-            position: absolute;
-            left: calc(100% + 4px);
-            top: 0;
+            position: static;
             display: inline-flex;
             align-items: center;
             height: 15px;
@@ -2169,45 +2193,96 @@
         /* 활성 상태 내부 텍스트 압축 */
         .room-card.playing .room-name, 
         .room-card.playing .remain-timer,
+        .room-card.playing .manager-team-text,
         .room-card.playing .team-text { color: #ffffff;  }
 
         .room-card.wait_rank .room-name, 
         .room-card.wait_rank .remain-timer,
+        .room-card.wait_rank .manager-team-text,
         .room-card.wait_rank .team-text { color: #000000; }
+
+        .manager-info-line {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(70px, 1.25fr) minmax(0, 1fr);
+            align-items: center;
+            width: 100%;
+            min-height: 23px;
+            min-width: 0;
+            gap: 5px;
+            pointer-events: none;
+        }
+
+        .manager-team-text {
+            grid-column: 2;
+            min-width: 0;
+            min-height: 22px;
+            overflow: hidden;
+            color: #0f172a;
+            font-size: 25px;
+            font-weight: 900;
+            line-height: 1.1;
+            text-align: center;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
 
         /* 팀명 박스 최소화 */
         .team-text {
+            grid-column: 3;
+            justify-self: end;
+            align-self: end;
             font-size: 15px;
             font-weight: 800;
             max-width: 100%;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            display: flex !important;
-            flex-direction: column !important;
-            margin: 2px 0;
-            margin-top: 5px !important;
-            margin-bottom: 10px !important;
-            width: 100% !important;
+            display: block !important;
+            margin: 0 !important;
+            width: auto !important;
+            text-align: right;
             background: transparent !important;
         }
 
+        /* 게임 상태 헤더는 유지하고 사이즈-난이도에만 오른쪽 여백 적용 */
+        .room-card.playing .team-text {
+            margin-right: 10px !important;
+        }
+
+        /* 대기중·게임 종료 같은 상태 문구는 카드 본문 정중앙에 표시 */
+        .room-card:not(.playing) .manager-info-line {
+            grid-template-columns: 1fr;
+        }
+        .room-card:not(.playing) .manager-team-text:empty {
+            display: none;
+        }
+        .room-card:not(.playing) .team-text {
+            grid-column: 1;
+            justify-self: center;
+            align-self: center;
+            text-align: center;
+        }
+
         .time-text {
-            display: flex !important;
-            flex-direction: column !important;
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important;
+            align-items: end !important;
             width: 100% !important; /* 부모 너비 꽉 채우기 */
-            margin-top: auto !important;
+            min-height: 28px;
+            margin-top: 2px !important;
             background: transparent !important;
         }
         /* 타이머 글자 크기 살짝 조정 */
         .remain-timer {
-            align-self: center !important; /* 가운데 정렬 */
+            grid-column: 2;
+            align-self: end !important;
+            justify-self: center !important;
             color: #f8f0c1 !important;    
             font-size: 26px !important;    /* 타이머 크기 강조 */
             font-weight: 900 !important;
             font-family: 'Inter', sans-serif !important;
             line-height: 1 !important;
-            margin-top: -10px !important;
+            margin: 0 !important;
             letter-spacing: -0.5px !important;
         }
 
@@ -2215,13 +2290,15 @@
 
         /* 1. 공통: 뱃지 기본 스타일 */
         .end-time-badge {
-            align-self: flex-start !important;
+            grid-column: 1;
+            align-self: end !important;
+            justify-self: start !important;
             display: inline-block !important;
             padding: 1px 5px !important;
             border-radius: 4px !important;
             font-size: 16px !important;
             font-weight: 800 !important;
-            margin-bottom: -15px !important;
+            margin: 0 !important;
             line-height: 1.2 !important;
             white-space: nowrap !important;
         }
@@ -2272,7 +2349,7 @@
         .room-card-header { font-size: 18px; font-weight: bold; display: flex; justify-content: space-between; }
         .walkin-panel .room-card.walkin .room-card-header { border-bottom: 2px solid #d9e2ef; padding: 0px 10px; padding-bottom: 5px; margin-bottom: 8px; }
         .room-card-walkin-body { font-size: 12px; max-height: 120px; text-align: center; overflow-x: hidden; overflow-y: auto;}
-        .room-card-body { font-size: 12px; text-align: center; overflow: hidden; }
+        .room-card-body { font-size: 12px; text-align: center; overflow: hidden; display: flex; flex: 1 1 auto; flex-direction: column; justify-content: flex-end; min-height: 52px; }
         .room-queue-container { display: flex; flex-direction: column; flex: 1; min-height: 0; }
         .room-queue { margin-top: auto; border-top: 1px dashed #ced4da; padding-top: 5px; font-size: 13px; color: #495057; max-height: 155px; overflow-y: auto; }
         .queue-item { display: flex; justify-content: space-between; margin-bottom: 2px; }

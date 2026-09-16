@@ -454,7 +454,7 @@ def create_remote_commands_blueprint(socketio, get_connection):
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """SELECT last_seen_at FROM room_agents
+                """SELECT capabilities_json, last_seen_at FROM room_agents
                    WHERE room_id=? AND status='online'
                    ORDER BY updated_at DESC LIMIT 1""",
                 (room_id,),
@@ -463,11 +463,28 @@ def create_remote_commands_blueprint(socketio, get_connection):
             if not agent:
                 return jsonify(success=False, message=f"{room_id} 방 브릿지가 연결되지 않았습니다."), 409
             try:
-                last_seen = datetime.strptime(str(agent[0]), "%Y-%m-%d %H:%M:%S")
+                last_seen = datetime.strptime(str(agent[1]), "%Y-%m-%d %H:%M:%S")
             except (TypeError, ValueError):
                 last_seen = datetime.min
             if datetime.now() - last_seen > timedelta(seconds=5):
                 return jsonify(success=False, message=f"{room_id} 방 브릿지 연결이 끊겼습니다."), 409
+
+            # A stop performed directly in Jumping Manager is mirrored by the
+            # bridge before the dashboard button necessarily refreshes. Treat
+            # another stop request as an idempotent state sync instead of
+            # asking the bridge to click a confirmation dialog that no longer
+            # exists.
+            state = _json(agent[0], {})
+            game_status = str(state.get("status") or "").strip()
+            is_playing = "게임중" in game_status or game_status.casefold() in {
+                "playing", "running", "in_game"
+            }
+            if not is_playing:
+                return jsonify(
+                    success=True,
+                    code="game_already_stopped",
+                    message=f"{room_id} 방은 이미 정지되어 대시보드 상태만 동기화했습니다.",
+                )
 
             command_id = uuid.uuid4().hex
             expires_at = (datetime.now() + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
