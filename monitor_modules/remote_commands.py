@@ -3,6 +3,8 @@
 import hmac
 import json
 import os
+import sqlite3
+import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -29,6 +31,35 @@ MAP_SERIALS = {
     "medium:space": 252, "medium:summer": 261, "medium:kids": 266, "medium:santa": 269,
     "large:space": 217, "large:summer": 250, "large:kids": 222, "large:santa": 265,
 }
+
+# The bridge polls frequently so that a staff command is picked up promptly.
+# Persisting four room snapshots and running an UPDATE on every poll made the
+# shared SQLite database contend with the log monitor, Naver webhook, and
+# walk-in kiosk.  Keep command polling fast, but write an unchanged heartbeat
+# only every few seconds.
+_AGENT_SYNC_CACHE = {}
+_AGENT_EXPIRY_CLEANUP_AT = 0.0
+_AGENT_STATE_HEARTBEAT_SECONDS = 5.0
+_AGENT_EXPIRY_CLEANUP_SECONDS = 15.0
+
+
+def _agent_state_signature(rooms):
+    """Return a stable, non-sensitive snapshot used only to reduce DB writes."""
+    compact = []
+    for room in rooms:
+        if not isinstance(room, dict):
+            continue
+        compact.append({
+            "roomId": str(room.get("roomId") or ""),
+            "status": str(room.get("status") or ""),
+            "teamName": str(room.get("teamName") or "")[:10],
+            "mapName": str(room.get("mapName") or "")[:120],
+            "mapIndex": room.get("mapIndex") or 0,
+            "level": str(room.get("level") or "")[:80],
+            "people": room.get("people") or 0,
+            "remainingSeconds": room.get("remainingSeconds") or 0,
+        })
+    return json.dumps(compact, ensure_ascii=False, sort_keys=True)
 
 def _normalise_level_key(value):
     text = " ".join(str(value or "").split()).casefold()
@@ -137,30 +168,49 @@ def create_remote_commands_blueprint(socketio, get_connection):
         )
 
         active_rooms = []
+        room_states = []
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn = get_connection()
-        cursor = conn.cursor()
-        try:
-            for room in rooms:
-                if not isinstance(room, dict):
-                    continue
-                source_room_id = str(room.get("roomId") or "").upper().strip()
-                room_id = AGENT_ROOM_TO_DASHBOARD.get(source_room_id, source_room_id)
-                if room_id not in ROOM_IDS:
-                    continue
-                active_rooms.append(room_id)
-                state = {
-                    "status": str(room.get("status") or "offline")[:30],
-                    "teamName": str(room.get("teamName") or "")[:10],
-                    "mapName": str(room.get("mapName") or "")[:120],
-                    "mapIndex": room.get("mapIndex") or 0,
-                    "mapOptions": room.get("mapOptions") if isinstance(room.get("mapOptions"), list) else [],
-                    "uiBridge": bool(room.get("uiBridge")),
-                    "level": str(room.get("level") or "")[:80],
-                    "people": room.get("people") or 0,
-                    "remainingSeconds": room.get("remainingSeconds") or 0,
-                }
-                cursor.execute(
+        monotonic_now = time.monotonic()
+        signature = _agent_state_signature(rooms)
+        previous = _AGENT_SYNC_CACHE.get(agent_id, {})
+        persist_state = (
+            previous.get("signature") != signature
+            or monotonic_now - previous.get("persisted_at", 0) >= _AGENT_STATE_HEARTBEAT_SECONDS
+        )
+        global _AGENT_EXPIRY_CLEANUP_AT
+        expire_commands = monotonic_now - _AGENT_EXPIRY_CLEANUP_AT >= _AGENT_EXPIRY_CLEANUP_SECONDS
+
+        for room in rooms:
+            if not isinstance(room, dict):
+                continue
+            source_room_id = str(room.get("roomId") or "").upper().strip()
+            room_id = AGENT_ROOM_TO_DASHBOARD.get(source_room_id, source_room_id)
+            if room_id not in ROOM_IDS:
+                continue
+            active_rooms.append(room_id)
+            room_states.append((room_id, {
+                "status": str(room.get("status") or "offline")[:30],
+                "teamName": str(room.get("teamName") or "")[:10],
+                "mapName": str(room.get("mapName") or "")[:120],
+                "mapIndex": room.get("mapIndex") or 0,
+                "mapOptions": room.get("mapOptions") if isinstance(room.get("mapOptions"), list) else [],
+                "uiBridge": bool(room.get("uiBridge")),
+                "level": str(room.get("level") or "")[:80],
+                "people": room.get("people") or 0,
+                "remainingSeconds": room.get("remainingSeconds") or 0,
+            }))
+
+        # A lock can be held briefly by the log monitor or Naver ingestion.
+        # Retrying here prevents that normal contention from turning into a
+        # Flask 500 and keeps the bridge command channel independent.
+        for attempt in range(3):
+            conn = get_connection(timeout=5)
+            cursor = conn.cursor()
+            commands = []
+            try:
+                if persist_state:
+                    for room_id, state in room_states:
+                        cursor.execute(
                     """INSERT INTO room_agents
                        (agent_id, room_id, agent_name, agent_version, connection_mode, status,
                         last_seen_at, capabilities_json, updated_at)
@@ -175,43 +225,53 @@ def create_remote_commands_blueprint(socketio, get_connection):
                         str(body.get("version") or "")[:50], now,
                         json.dumps(state, ensure_ascii=False), now,
                     ),
-                )
+                        )
 
-            cursor.execute(
+                if expire_commands:
+                    cursor.execute(
                 """UPDATE command_queue SET status='expired', error_message='Command expired'
                    WHERE status IN ('pending', 'delivered')
                      AND expires_at IS NOT NULL AND expires_at < ?""",
                 (now,),
-            )
+                    )
 
-            commands = []
-            if active_rooms:
-                placeholders = ",".join("?" for _ in active_rooms)
-                cursor.execute(
+                if active_rooms:
+                    placeholders = ",".join("?" for _ in active_rooms)
+                    cursor.execute(
                     f"""SELECT command_id, room_id, command_type, payload_json
                         FROM command_queue
                        WHERE status='pending' AND room_id IN ({placeholders})
                        ORDER BY requested_at ASC LIMIT 20""",
-                    active_rooms,
-                )
-                for row in cursor.fetchall():
-                    payload = _json(row[3], {})
-                    commands.append({
+                        active_rooms,
+                    )
+                    for row in cursor.fetchall():
+                        payload = _json(row[3], {})
+                        commands.append({
                         # Reply in the bridge's manager-panel ID convention.
                         "id": row[0], "roomId": DASHBOARD_ROOM_TO_AGENT.get(row[1], row[1]),
                         "action": row[2], "payload": payload,
-                    })
-                    cursor.execute(
+                        })
+                        cursor.execute(
                         """UPDATE command_queue SET status='delivered', claimed_by=?, claimed_at=?
                            WHERE command_id=? AND status='pending'""",
                         (agent_id, now, row[0]),
-                    )
-                    record_event(cursor, row[0], row[1], "delivered", agent_id)
-            conn.commit()
-        finally:
-            conn.close()
-
-        return jsonify(success=True, commands=commands)
+                        )
+                        record_event(cursor, row[0], row[1], "delivered", agent_id)
+                if persist_state or expire_commands or commands:
+                    conn.commit()
+                if persist_state:
+                    _AGENT_SYNC_CACHE[agent_id] = {"signature": signature, "persisted_at": monotonic_now}
+                if expire_commands:
+                    _AGENT_EXPIRY_CLEANUP_AT = monotonic_now
+                return jsonify(success=True, commands=commands)
+            except sqlite3.OperationalError as error:
+                conn.rollback()
+                if "locked" not in str(error).lower() or attempt == 2:
+                    current_app.logger.warning("Bridge sync database unavailable: %s", error)
+                    return jsonify(success=False, message="Database is busy; bridge will retry"), 503
+                time.sleep(0.2 * (attempt + 1))
+            finally:
+                conn.close()
 
     @blueprint.post("/api/agent/ack")
     def agent_ack():

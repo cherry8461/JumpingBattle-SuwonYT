@@ -8,6 +8,8 @@ import threading
 import gspread
 import imaplib
 import email
+from email.utils import parsedate_to_datetime
+import html
 import base64
 import hashlib
 import logging
@@ -40,6 +42,7 @@ from monitor_core.settings import (
 from monitor_modules.naver_reservations import (
     clear_dashboard_time_change,
     create_naver_reservations_blueprint,
+    ensure_naver_email_placeholder_card,
     notify_email_hint_received,
     notify_stock_plan_changed,
     record_dashboard_time_change,
@@ -65,7 +68,16 @@ OFFSET_FILE = "log_offset.dat"
 PAD_COUNT = 4
 
 base_path = str(PROJECT_ROOT)
-key_path = os.path.join(base_path, "config", "google_key.json")
+
+
+def get_google_key_path():
+    configured_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+    if configured_path:
+        return os.path.abspath(os.path.expandvars(os.path.expanduser(configured_path)))
+    return os.path.join(base_path, "config", "google_key.json")
+
+
+key_path = get_google_key_path()
 gc = None
 sh = None 
 
@@ -73,15 +85,26 @@ sh = None
 def init_google_sheets():
     global gc, sh
     try:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-        key_path = os.path.join(base_path, "config", "google_key.json")
-        gc = gspread.service_account(filename=key_path)
+        credential_path = get_google_key_path()
+        if not os.path.isfile(credential_path):
+            raise FileNotFoundError(
+                "Google service-account file was not found: " + credential_path
+            )
+        gc = gspread.service_account(filename=credential_path)
         sh = gc.open("2026년 월 정산표")
         print("구글 시트 연결 성공!")
     except Exception as e:
+        gc = None
+        sh = None
         print(f"연결 실패: {e}")
 
 def save_to_google_sheet(data):
+    if sh is None:
+        init_google_sheets()
+    if sh is None:
+        raise RuntimeError(
+            "Google Sheets connection is unavailable. Check GOOGLE_SERVICE_ACCOUNT_FILE and restart the dashboard server."
+        )
     current_month_name = f"{int(datetime.now().strftime('%m'))}월"
     
     try:
@@ -367,7 +390,7 @@ logging.getLogger('werkzeug').setLevel(logging.INFO)
 print(f"💾 [시스템 고도화] 이번 세션 로그가 생성되었습니다: {CURRENT_LOG_PATH}")
 
 
-def get_today_log_file():
+def get_today_log_files():
     today = datetime.now().strftime("%Y_%m_%d")
 
     if not os.path.exists(SERVER_LOG_DIR):
@@ -383,11 +406,24 @@ def get_today_log_file():
         return None
 
     # 가장 최근 파일 선택
-    candidates.sort(reverse=True)
-    selected = candidates[0]
+    candidates.sort(
+        key=lambda filename: (
+            os.path.getmtime(os.path.join(SERVER_LOG_DIR, filename)),
+            filename,
+        ),
+    )
+    return [os.path.join(SERVER_LOG_DIR, filename) for filename in candidates]
+
+
+def get_today_log_file():
+    log_files = get_today_log_files()
+    if not log_files:
+        return None
+
+    selected = log_files[-1]
 
     print(f"📌 선택된 로그 파일: {selected}")   # ✅ 추가
-    return os.path.join(SERVER_LOG_DIR, candidates[0])
+    return selected
 
 def open_log_file(path):
     print(f"📄 로그 파일 열기: {path}")
@@ -703,9 +739,9 @@ def init_db():
                 status TEXT DEFAULT 'INIT',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-    # Mail arrives before Naver's calendar updates. Keep only a short,
-    # deduplicated signal here; the extension fetches the authoritative
-    # customer details and booking ID before any dashboard card is created.
+    # Mail arrives before Naver's calendar updates. Keep a short deduplicated
+    # signal and create a provisional timetable card immediately; the Chrome
+    # extension later enriches that same card with authoritative details.
     cur.execute('''CREATE TABLE IF NOT EXISTS naver_email_hints (
                 hint_key TEXT PRIMARY KEY,
                 booking_id TEXT,
@@ -714,6 +750,19 @@ def init_db():
                 room_name TEXT,
                 received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_naver_email_hints_received ON naver_email_hints(received_at)')
+
+    # Gmail is the fast event channel. Keep a UID checkpoint and remember
+    # customer cancellation emails separately from staff-side API changes.
+    cur.execute('''CREATE TABLE IF NOT EXISTS gmail_sync_state (
+                account TEXT PRIMARY KEY,
+                last_uid INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS naver_customer_cancellation_emails (
+                booking_id TEXT PRIMARY KEY,
+                gmail_uid TEXT,
+                use_date TEXT NOT NULL DEFAULT '',
+                cancelled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         
 
     # Logical rooms remain stable even when each room later uses a separate PC.
@@ -1494,15 +1543,20 @@ def log_monitor():
     for k in log_stats:
         log_stats[k] = 0
 
-    log_file = get_today_log_file()
+    today_log_files = get_today_log_files()
     #log_file = r"D:\test\logs\2026_02_14__10_11_28_log.txt"
     
-    if not log_file:
+    if not today_log_files:
         print("⚠ 로그 파일 없음")
         return
 
+    log_file = today_log_files[-1]
+
     # 🔥 1단계: 과거 로그 전부 보정
-    scan_existing_log_and_save(log_file)
+    print(f"🔁 오늘 로그 전체 재검사: {len(today_log_files)}개")
+    for history_log_file in today_log_files:
+        print(f"  - {os.path.basename(history_log_file)}")
+        scan_existing_log_and_save(history_log_file)
 
     # 🔥 2단계: 현재 진행 중 PAD 복구
     restore_pad_state_from_log(log_file)
@@ -2802,6 +2856,10 @@ def recover_naver_reservation_to_onsite_payment(booking_id):
 
         # Remove only the automatic count created by this exact customer cancellation.
         deleted = conn.execute("DELETE FROM naver_cancellation_events WHERE booking_id=?", (booking_id,)).rowcount
+        conn.execute(
+            "DELETE FROM naver_customer_cancellation_emails WHERE booking_id=?",
+            (booking_id,),
+        )
         if deleted and reservation[1] == datetime.now().strftime('%Y-%m-%d'):
             conn.execute(
                 "UPDATE settlement_daily_meta SET no_show_count=MAX(no_show_count - 1, 0), updated_at=datetime('now', 'localtime') WHERE target_date=?",
@@ -2899,18 +2957,39 @@ def naver_booking_webhook():
             return jsonify({'success': False, 'message': '올바르지 않은 웹훅 데이터 형식입니다.'}), 400
         
         raw_email_content = data['content']
+        subject = str(data.get('subject') or '')
+
+        # Only a customer cancellation email authorizes automatic card removal.
+        # Naver API's cancelled status can also be caused by a staff payment change.
+        if _classify_suwonyt_naver_subject(subject) == 'cancellation' or _mail_content_is_cancellation(raw_email_content):
+            booking_id = _extract_naver_booking_id(raw_email_content)
+            if booking_id:
+                with get_db_connection() as connection:
+                    cancelled = _apply_customer_cancellation_email(
+                        connection.cursor(), booking_id,
+                        gmail_uid=str(data.get('uid') or ''),
+                        fallback_use_date=_extract_naver_use_date(raw_email_content),
+                        cancellation_received_at=str(data.get('receivedAt') or ''),
+                    )
+                notify_email_hint_received()
+                socketio.emit('naver_reservations_synced', {'customer_cancelled': True})
+                return jsonify({'success': True, 'message': '고객 취소메일 반영 완료', 'data': cancelled}), 200
         
         # 💡 아까 완성한 메일 파싱 및 캐시 DB 저장 함수 호출!
         parse_result = parse_and_save_naver_email(raw_email_content)
-        # The mail is an early signal only.  Final customer data is fetched
-        # from the logged-in Naver page, keyed by Naver booking ID.
+        placeholder_created = False
+        if isinstance(parse_result, dict):
+            with get_db_connection() as connection:
+                _, placeholder_created = ensure_naver_email_placeholder_card(connection.cursor(), parse_result)
+        # Final customer data is fetched from the logged-in Naver page and
+        # merged into the provisional card by Naver booking ID.
         email_hint = record_naver_email_hint(raw_email_content, parse_result)
         notify_email_hint_received()
-        socketio.emit('naver_email_hint_received', {'received': True})
+        socketio.emit('naver_email_hint_received', {'received': True, 'card_created': placeholder_created})
         
         if parse_result or email_hint:
             socketio.emit('walkin_added')
-            print(f"✅ [실시간 푸시 발송 완료] 번호: {parse_result.get('res_id')}")
+            print(f"✅ [실시간 푸시 발송 완료] 번호: {parse_result.get('booking_id') if isinstance(parse_result, dict) else ''}")
             return jsonify({'success': True, 'message': '네이버 예약 캐시 저장 및 실시간 푸시 완료', 'data': parse_result}), 200
         else:
             socketio.emit('walkin_added')
@@ -3055,6 +3134,32 @@ def parse_and_save_naver_email(raw_email_content):
     규칙에 맞게 파싱하여 DB에 INIT 상태로 저장하는 함수
     """
     try:
+        # Prefer the current Suwon Yeongtong Naver mail format. The legacy
+        # parser below remains as a fallback for older stored messages.
+        parsed_fields = _parse_suwonyt_naver_confirmation(raw_email_content)
+        if parsed_fields:
+            conn = sqlite3.connect(DB_FILE, timeout=30)
+            try:
+                conn.execute(
+                    '''INSERT INTO naver_mail_cache
+                       (booking_id, masked_name, use_date, use_time_key, room_name, status)
+                       VALUES (?, ?, ?, ?, ?, 'INIT')
+                       ON CONFLICT(booking_id) DO UPDATE SET
+                           masked_name=excluded.masked_name,
+                           use_date=excluded.use_date,
+                           use_time_key=excluded.use_time_key,
+                           room_name=excluded.room_name''',
+                    (
+                        parsed_fields['booking_id'], parsed_fields['masked_name'],
+                        parsed_fields['use_date'], parsed_fields['use_time_key'],
+                        parsed_fields['room_name'],
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return parsed_fields
+
         decoded_body = ""
 
         # 1. 메일 원문에서 text/plain 또는 text/html의 base64 본문 텍스트 추출
@@ -3138,9 +3243,14 @@ def parse_and_save_naver_email(raw_email_content):
         
         # 💡 정제된 final_name 변수가 매핑되도록 쿼리 인자 수정
         cur.execute('''
-            INSERT INTO naver_mail_cache 
+            INSERT INTO naver_mail_cache
             (booking_id, masked_name, use_date, use_time_key, room_name, status)
             VALUES (?, ?, ?, ?, ?, 'INIT')
+            ON CONFLICT(booking_id) DO UPDATE SET
+                masked_name=excluded.masked_name,
+                use_date=excluded.use_date,
+                use_time_key=excluded.use_time_key,
+                room_name=excluded.room_name
         ''', (booking_id, final_name, use_date, use_time_key, room_name))
         
         conn.commit()
@@ -3167,7 +3277,264 @@ def parse_and_save_naver_email(raw_email_content):
 
 load_dotenv()
 
-def sync_missed_emails():
+
+def _decode_mail_subject(message):
+    decoded = []
+    for value, encoding in decode_header(message.get('Subject', '') or ''):
+        if isinstance(value, bytes):
+            decoded.append(value.decode(encoding or 'utf-8', errors='ignore'))
+        else:
+            decoded.append(str(value))
+    return ''.join(decoded)
+
+
+def _extract_mail_text(message):
+    chunks = []
+    parts = message.walk() if message.is_multipart() else (message,)
+    for part in parts:
+        if part.get_content_type() not in {'text/plain', 'text/html'}:
+            continue
+        payload = part.get_payload(decode=True)
+        if payload is None:
+            payload = str(part.get_payload() or '').encode('utf-8', errors='ignore')
+        chunks.append(payload.decode(part.get_content_charset() or 'utf-8', errors='ignore'))
+    return '\n'.join(chunks)
+
+
+NAVER_CONFIRM_SUBJECT = '[네이버 예약] 점핑배틀 수원영통점 새로운 예약이 확정 되었습니다.'
+NAVER_CANCEL_SUBJECT = '[네이버 예약] 점핑배틀 수원영통점 고객님이 예약을 취소하셨습니다.'
+
+
+def _normalized_mail_subject(subject):
+    return re.sub(r'\s+', ' ', str(subject or '')).strip()
+
+
+def _classify_suwonyt_naver_subject(subject):
+    normalized = _normalized_mail_subject(subject)
+    if normalized == NAVER_CONFIRM_SUBJECT or (
+        '점핑배틀 수원영통점' in normalized and '새로운 예약이 확정' in normalized
+    ):
+        return 'confirmation'
+    if normalized == NAVER_CANCEL_SUBJECT or (
+        '점핑배틀 수원영통점' in normalized and '고객님이 예약을 취소' in normalized
+    ):
+        return 'cancellation'
+    return ''
+
+
+def _readable_naver_mail_text(content):
+    text = str(content or '')
+    # Parse only a real RFC/MIME source. Running an already-extracted plain
+    # body through message_from_string can mistake its first labelled lines
+    # for mail headers and silently discard values such as the booking ID.
+    if re.search(
+        r'(?im)^(?:MIME-Version|Content-Type|Content-Transfer-Encoding|Subject):',
+        text[:5000],
+    ):
+        try:
+            message = email.message_from_string(text)
+            extracted = _extract_mail_text(message)
+            if extracted.strip():
+                text = extracted
+        except Exception:
+            pass
+    text = html.unescape(text)
+    text = re.sub(r'<(?:br|/p|/div|/tr|/li)\b[^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = text.replace('\xa0', ' ')
+    return re.sub(r'[ \t\r\f\v]+', ' ', text)
+
+
+def _parse_suwonyt_naver_confirmation(content):
+    text = _readable_naver_mail_text(content)
+    booking_match = re.search(r'예약번호\s*[:：]?\s*(\d{6,})', text)
+    datetime_match = re.search(
+        r'이용일시\s*[:：]?\s*(20\d{2})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})'
+        r'(?:\s*[.일()]|\s*[월화수목금토일](?:요일)?)*\s*(오전|오후)\s*(\d{1,2}):(\d{2})',
+        text,
+    )
+    if not booking_match or not datetime_match:
+        return None
+
+    name_match = re.search(r'예약자명\s*[:：]?\s*([가-힣A-Za-z*]{1,40})', text)
+    product_match = re.search(
+        r'예약상품\s*[:：]?\s*(.+?)(?=\s*이용일시\s*[:：]?|\s*결제상태\s*[:：]?|\n)',
+        text,
+        re.DOTALL,
+    )
+    masked_name = name_match.group(1).strip() if name_match else '미확인'
+    if masked_name.endswith('님'):
+        masked_name = masked_name[:-1]
+    product = re.sub(r'\s+', ' ', product_match.group(1)).strip() if product_match else '미확인'
+    room_match = re.search(r'\b(C[12]|B[12])\b', product, re.IGNORECASE)
+    room_name = room_match.group(1).upper() if room_match else product
+
+    year, month, day = map(int, datetime_match.group(1, 2, 3))
+    ampm = datetime_match.group(4)
+    hour = int(datetime_match.group(5))
+    minute = int(datetime_match.group(6))
+    if ampm == '오후' and hour != 12:
+        hour += 12
+    elif ampm == '오전' and hour == 12:
+        hour = 0
+    return {
+        'booking_id': booking_match.group(1),
+        'use_date': f'{year:04d}-{month:02d}-{day:02d}',
+        'use_time_key': f'{hour:02d}-{minute:02d}',
+        'masked_name': masked_name or '미확인',
+        'room_name': room_name,
+    }
+
+
+def _extract_naver_booking_id(content):
+    match = re.search(
+        r'예약번호\s*[:：]?\s*([A-Z0-9-]+|[0-9]+)',
+        _readable_naver_mail_text(content),
+        re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else ''
+
+
+def _extract_naver_use_date(content):
+    parsed = _parse_suwonyt_naver_confirmation(content)
+    if parsed:
+        return parsed['use_date']
+    match = re.search(r'(20\d{2})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})', str(content or ''))
+    if not match:
+        return ''
+    try:
+        return datetime(*(int(value) for value in match.groups())).strftime('%Y-%m-%d')
+    except ValueError:
+        return ''
+
+
+def _mail_content_is_cancellation(content):
+    text = str(content or '')
+    try:
+        subject = _decode_mail_subject(email.message_from_string(text))
+    except Exception:
+        subject = ''
+    return _classify_suwonyt_naver_subject(subject) == 'cancellation' or bool(
+        re.search(
+            r'고객님이\s*예약을\s*취소|예약\s*(?:이\s*)?취소',
+            _readable_naver_mail_text(text)[:5000],
+        )
+    )
+
+
+def _mail_received_local_date(value):
+    """Return the local calendar date carried by a webhook or RFC mail header."""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or '').strip()
+        if not raw:
+            return ''
+        try:
+            parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(raw)
+            except (TypeError, ValueError, OverflowError):
+                return ''
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone()
+    return parsed.strftime('%Y-%m-%d')
+
+
+def _apply_customer_cancellation_email(
+    cursor, booking_id, gmail_uid='', fallback_use_date='', cancellation_received_at=''
+):
+    """Hide the exact linked card and count a same-day customer cancel once."""
+    cursor.execute("SELECT use_date FROM naver_reservations WHERE booking_id=?", (booking_id,))
+    row = cursor.fetchone()
+    use_date = str(row[0] or '') if row else ''
+    if not use_date:
+        cursor.execute("SELECT use_date FROM naver_mail_cache WHERE booking_id=?", (booking_id,))
+        row = cursor.fetchone()
+        use_date = str(row[0] or '') if row else ''
+    cursor.execute("SELECT booking_row_id FROM naver_booking_card_links WHERE booking_id=?", (booking_id,))
+    link = cursor.fetchone()
+    booking_row_id = int(link[0]) if link and link[0] else None
+    if not use_date and booking_row_id:
+        cursor.execute("SELECT booking_date FROM bookings WHERE id=?", (booking_row_id,))
+        row = cursor.fetchone()
+        use_date = str(row[0] or '') if row else ''
+    use_date = use_date or str(fallback_use_date or '')
+
+    cursor.execute(
+        '''INSERT OR IGNORE INTO naver_customer_cancellation_emails
+           (booking_id, gmail_uid, use_date) VALUES (?, ?, ?)''',
+        (booking_id, gmail_uid, use_date),
+    )
+    first_customer_cancel = cursor.rowcount == 1
+    cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (booking_id,))
+    cursor.execute("DELETE FROM naver_time_overrides WHERE booking_id=?", (booking_id,))
+    cursor.execute(
+        "UPDATE naver_reservations SET booking_status='CANCELED', cancelled_at=COALESCE(cancelled_at, CURRENT_TIMESTAMP), updated_at=CURRENT_TIMESTAMP WHERE booking_id=?",
+        (booking_id,),
+    )
+    if booking_row_id:
+        cursor.execute(
+            "UPDATE naver_booking_card_links SET card_state='cancelled_hidden', updated_at=CURRENT_TIMESTAMP WHERE booking_id=?",
+            (booking_id,),
+        )
+
+    counted = False
+    # A cancellation discovered during tomorrow's startup scan must retain the
+    # date on which the customer actually cancelled. Otherwise a reservation
+    # cancelled the previous day would be counted as a same-day no-show merely
+    # because the server first processed that mail on its use date.
+    cancellation_date = _mail_received_local_date(cancellation_received_at)
+    if not cancellation_date:
+        cancellation_date = datetime.now().strftime('%Y-%m-%d')
+    if first_customer_cancel and use_date == cancellation_date:
+        cursor.execute(
+            "INSERT OR IGNORE INTO naver_cancellation_events (booking_id, use_date) VALUES (?, ?)",
+            (booking_id, use_date),
+        )
+        if cursor.rowcount == 1:
+            cursor.execute(
+                '''INSERT INTO settlement_daily_meta (target_date, no_show_count, updated_at)
+                   VALUES (?, 1, datetime('now', 'localtime'))
+                   ON CONFLICT(target_date) DO UPDATE SET
+                       no_show_count=settlement_daily_meta.no_show_count + 1,
+                       updated_at=datetime('now', 'localtime')''',
+                (use_date,),
+            )
+            counted = True
+    return {
+        'booking_id': booking_id,
+        'use_date': use_date,
+        'cancellation_date': cancellation_date,
+        'card_hidden': bool(booking_row_id),
+        'no_show_counted': counted,
+    }
+
+
+def _gmail_today_search_uids(mail, today):
+    """Search Gmail's server-side index without downloading the mailbox."""
+    terms = {
+        today.strftime('%Y.%m.%d'),
+        today.strftime('%Y-%m-%d'),
+        f'{today.year}. {today.month:02d}. {today.day:02d}',
+    }
+    found = set()
+    for term in terms:
+        # Sender addresses can change between Naver mail templates. Search
+        # only the numeric use-date here, then apply the strict SuwonYT
+        # subject classifier after fetching the small result set.
+        query = f'"{term}"'
+        # imaplib sends each argument as a separate IMAP atom. X-GM-RAW
+        # queries containing spaces therefore need one outer quoted string.
+        escaped_query = query.replace('\\', '\\\\').replace('"', '\\"')
+        status, values = mail.uid('search', None, 'X-GM-RAW', f'"{escaped_query}"')
+        if status == 'OK' and values and values[0]:
+            found.update(int(value) for value in values[0].split())
+    return found
+
+
+def _sync_missed_emails_legacy():
     GMAIL_USER = os.getenv("GMAIL_USER")
     GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
     
@@ -3299,6 +3666,122 @@ def sync_missed_emails():
 
 
 
+
+
+def sync_missed_emails(include_today_reconcile=True):
+    """Recover new mail by UID and reconcile every message for today's use date."""
+    gmail_user = os.getenv("GMAIL_USER")
+    gmail_app_password = os.getenv("GMAIL_APP_PASSWORD")
+    if not gmail_user or not gmail_app_password:
+        print("[Gmail 동기화 건너뜀] 이메일 또는 앱 비밀번호 설정이 없습니다.")
+        return
+
+    mail = None
+    try:
+        mail = imaplib.IMAP4_SSL(os.getenv("GMAIL_IMAP_SERVER", "imap.gmail.com"), 993)
+        mail.login(gmail_user, gmail_app_password)
+        mail.select("inbox", readonly=True)
+        account_key = gmail_user.casefold()
+        with get_db_connection() as connection:
+            row = connection.execute(
+                "SELECT last_uid FROM gmail_sync_state WHERE account=?", (account_key,)
+            ).fetchone()
+            last_uid = int(row[0] or 0) if row else 0
+
+        status, values = mail.uid('search', None, 'ALL')
+        all_uids = {int(value) for value in values[0].split()} if status == 'OK' and values and values[0] else set()
+        # On first installation, establish a checkpoint without downloading
+        # historical mail. Today's indexed search below is the bootstrap.
+        # On later runs, fetch only messages newer than the checkpoint; the
+        # strict subject classifier below discards unrelated mail.
+        new_uids = {uid for uid in all_uids if uid > last_uid} if last_uid else set()
+        today_uids = _gmail_today_search_uids(mail, datetime.now()) if include_today_reconcile else set()
+        target_uids = sorted(new_uids | today_uids)
+        if target_uids or include_today_reconcile:
+            print(f"[Gmail 동기화] 신규 {len(new_uids)}건 + 오늘 이용일 검증 {len(today_uids)}건")
+
+        confirm_count = 0
+        cancel_count = 0
+        for uid in target_uids:
+            fetch_status, fetched = mail.uid('fetch', str(uid), '(RFC822)')
+            if fetch_status != 'OK' or not fetched:
+                continue
+            raw_message = next((item[1] for item in fetched if isinstance(item, tuple)), None)
+            if not raw_message:
+                continue
+            message = email.message_from_bytes(raw_message)
+            subject = _decode_mail_subject(message)
+            body = _extract_mail_text(message)
+            mail_kind = _classify_suwonyt_naver_subject(subject)
+            if not mail_kind:
+                continue
+            booking_id = _extract_naver_booking_id(body)
+            if not booking_id:
+                continue
+
+            if mail_kind == 'cancellation':
+                with get_db_connection() as connection:
+                    result = _apply_customer_cancellation_email(
+                        connection.cursor(), booking_id, gmail_uid=str(uid),
+                        fallback_use_date=_extract_naver_use_date(body),
+                        cancellation_received_at=message.get('Date', ''),
+                    )
+                cancel_count += 1
+                print(f"[Gmail 고객취소] {booking_id} / 이용일 {result['use_date'] or '미확인'}")
+                continue
+
+            if mail_kind == 'confirmation':
+                with get_db_connection() as connection:
+                    cancelled = connection.execute(
+                        "SELECT 1 FROM naver_customer_cancellation_emails WHERE booking_id=?",
+                        (booking_id,),
+                    ).fetchone()
+                if cancelled:
+                    continue
+                parsed = parse_and_save_naver_email(body)
+                if isinstance(parsed, dict):
+                    with get_db_connection() as connection:
+                        _, created = ensure_naver_email_placeholder_card(connection.cursor(), parsed)
+                    confirm_count += int(created)
+
+        if all_uids:
+            with get_db_connection() as connection:
+                connection.execute(
+                    '''INSERT INTO gmail_sync_state (account, last_uid, updated_at)
+                       VALUES (?, ?, CURRENT_TIMESTAMP)
+                       ON CONFLICT(account) DO UPDATE SET
+                           last_uid=MAX(last_uid, excluded.last_uid),
+                           updated_at=CURRENT_TIMESTAMP''',
+                    (account_key, max(all_uids)),
+                )
+        if target_uids or include_today_reconcile:
+            notify_email_hint_received()
+            socketio.emit('naver_reservations_synced', {'startup_mail_sync': include_today_reconcile})
+            print(f"[Gmail 동기화 완료] 오늘 카드 {confirm_count}건 / 고객취소 {cancel_count}건")
+    except Exception as error:
+        web.logger.exception("Gmail 예약 동기화 실패: %s", error)
+    finally:
+        if mail is not None:
+            try:
+                mail.close()
+            except Exception:
+                pass
+            try:
+                mail.logout()
+            except Exception:
+                pass
+
+
+def monitor_gmail_reservation_mail():
+    """Fallback realtime watcher when the external Gmail webhook is delayed."""
+    try:
+        interval_seconds = max(10, int(os.getenv('GMAIL_POLL_SECONDS', '15')))
+    except (TypeError, ValueError):
+        interval_seconds = 15
+    while True:
+        time.sleep(interval_seconds)
+        with web.app_context():
+            sync_missed_emails(include_today_reconcile=False)
 
 
 @web.route('/api/queue/<int:qid>', methods=['PUT'])
@@ -3608,6 +4091,11 @@ if __name__ == "__main__":
     should_start_monitor = (not dev_reload) or (os.getenv("WERKZEUG_RUN_MAIN") == "true")
     if should_start_monitor:
         threading.Thread(target=log_monitor, daemon=True).start()
+        threading.Thread(
+            target=monitor_gmail_reservation_mail,
+            daemon=True,
+            name='gmail-reservation-monitor',
+        ).start()
 
     socketio.run(
         web, 

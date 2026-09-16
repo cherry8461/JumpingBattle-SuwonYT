@@ -35,9 +35,8 @@ def notify_stock_plan_changed() -> None:
 def notify_email_hint_received() -> None:
     """Wake the local extension as soon as a Naver reservation email arrives.
 
-    The email is only an early signal: final data always comes from the
-    authenticated Naver reservation page, so a mail and page result can never
-    create two dashboard cards.
+    The server has already placed a provisional card from the mail metadata;
+    the authenticated Naver result enriches that same booking-linked card.
     """
     global _email_hint_revision
     with _email_hint_condition:
@@ -134,6 +133,73 @@ def clear_dashboard_time_change(cursor, booking_row_id: int) -> None:
     cursor.execute("DELETE FROM naver_time_overrides WHERE booking_row_id=?", (booking_row_id,))
 
 
+def ensure_naver_email_placeholder_card(cursor, mail_item: dict) -> tuple[int | None, bool]:
+    """Create an immediate timetable placeholder from the early email signal."""
+    booking_id = str(mail_item.get("booking_id") or "").strip()
+    use_date = str(mail_item.get("use_date") or "").strip()
+    timeline_time = dashboard_time_key(mail_item.get("use_time_key"))
+    room_match = ROOM_PATTERN.search(str(mail_item.get("room_name") or ""))
+    room = room_match.group(1).upper() if room_match else ""
+    if not (booking_id and use_date and timeline_time and room in {"C1", "C2", "B1", "B2"}):
+        return None, False
+
+    cursor.execute(
+        "SELECT booking_row_id FROM naver_booking_card_links WHERE booking_id=?",
+        (booking_id,),
+    )
+    linked = cursor.fetchone()
+    if linked and linked[0]:
+        return int(linked[0]), False
+
+    cursor.execute(
+        "SELECT COUNT(*), COALESCE(MAX(order_no), 0) FROM bookings WHERE booking_date=? AND time_key=? AND room=?",
+        (use_date, timeline_time, room),
+    )
+    occupied_count, max_order = cursor.fetchone()
+    payment_data = json.dumps(
+        {
+            "totalPeople": "",
+            "roomFlags": {"F": False, "S": room.startswith("C"), "M": room.startswith("B"), "L": False},
+            "roomFlagLabel": "소" if room.startswith("C") else "중",
+            "isBooker": True,
+            "depositPaid": True,
+            "depositAmount": 5000,
+            "reservationTime": normalize_time_key(mail_item.get("use_time_key")).replace("-", ":"),
+            "naverBookingId": booking_id,
+            "naverPendingDetails": True,
+            "reservationSlotDuplicate": bool(occupied_count),
+        },
+        ensure_ascii=False,
+    )
+    cursor.execute(
+        """
+        INSERT INTO bookings (
+            booking_date, time_key, room, name, phone, team, level, people,
+            order_no, paid, completed, payment_data
+        ) VALUES (?, ?, ?, ?, '', '네이버 예약 확인중', '', '', ?, 0, 0, ?)
+        """,
+        (
+            use_date, timeline_time, room,
+            str(mail_item.get("masked_name") or "미확인"),
+            int(max_order or 0) + 1, payment_data,
+        ),
+    )
+    booking_row_id = int(cursor.lastrowid)
+    cursor.execute(
+        """
+        INSERT INTO naver_booking_card_links (booking_id, booking_row_id, handling_mode, card_state)
+        VALUES (?, ?, 'standard', 'pending_details')
+        ON CONFLICT(booking_id) DO UPDATE SET
+            booking_row_id=excluded.booking_row_id,
+            card_state='pending_details',
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (booking_id, booking_row_id),
+    )
+    cursor.execute("UPDATE naver_mail_cache SET status='CONFIRMED' WHERE booking_id=?", (booking_id,))
+    return booking_row_id, True
+
+
 def ensure_naver_dashboard_card(cursor, normalized: dict) -> tuple[int | None, bool]:
     """Create one timetable card for an actionable Naver game-room booking.
 
@@ -153,11 +219,54 @@ def ensure_naver_dashboard_card(cursor, normalized: dict) -> tuple[int | None, b
     )
     existing = cursor.fetchone()
     if existing and existing[0]:
+        # A mail hint can create the legacy waiting-list card before the
+        # authenticated Naver API has supplied its complete details.  When
+        # that API result arrives, enrich the already-linked card instead of
+        # leaving its placeholder team/level/phone on the timetable.
+        booking_row_id = int(existing[0])
+        cursor.execute("SELECT payment_data FROM bookings WHERE id=?", (booking_row_id,))
+        payment_row = cursor.fetchone()
+        try:
+            payment_data = json.loads(payment_row[0] or "{}") if payment_row else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payment_data = {}
+        cursor.execute(
+            "SELECT COUNT(*) FROM bookings WHERE booking_date=? AND time_key=? AND room=? AND id<>?",
+            (normalized["use_date"], timeline_time, room, booking_row_id),
+        )
+        payment_data["naverPendingDetails"] = False
+        payment_data["reservationSlotDuplicate"] = bool(cursor.fetchone()[0])
+        payment_data["reservationTime"] = normalized["use_time_key"].replace("-", ":")
+        payment_data["naverBookingId"] = booking_id
+        payment_data["isBooker"] = True
+        payment_data["depositPaid"] = True
+        payment_data["depositAmount"] = 5000
+        payment_data["roomFlags"] = {"F": False, "S": room.startswith("C"), "M": room.startswith("B"), "L": False}
+        payment_data["roomFlagLabel"] = "소" if room.startswith("C") else "중"
+        cursor.execute(
+            "SELECT COALESCE(MAX(order_no), 0) FROM bookings WHERE booking_date=? AND time_key=? AND room=? AND id<>?",
+            (normalized["use_date"], timeline_time, room, booking_row_id),
+        )
+        order_no = int(cursor.fetchone()[0] or 0) + 1
+        cursor.execute(
+            """
+            UPDATE bookings
+               SET booking_date=?, time_key=?, room=?, order_no=?,
+                   name=?, phone=?, team=?, level=?, payment_data=?
+             WHERE id=?
+            """,
+            (
+                normalized["use_date"], timeline_time, room, order_no,
+                normalized.get("customer_name", ""), normalized.get("phone", ""),
+                str(normalized.get("team_name", ""))[:10], normalized.get("difficulty", ""),
+                json.dumps(payment_data, ensure_ascii=False), booking_row_id,
+            ),
+        )
         cursor.execute(
             "UPDATE naver_booking_card_links SET card_state='active', updated_at=CURRENT_TIMESTAMP WHERE booking_id=?",
             (booking_id,),
         )
-        return int(existing[0]), False
+        return booking_row_id, False
 
     cursor.execute(
         "SELECT COALESCE(MAX(order_no), 0) FROM bookings WHERE booking_date=? AND time_key=? AND room=?",
@@ -272,10 +381,18 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     or is_linked_card_marked_for_onsite_payment(cursor, dashboard_booking_id)
                 )
                 if normalized["is_cancelled"]:
-                    # A customer cancellation ends any phone-requested time
-                    # change. The extension will release its moved-to slot.
-                    cursor.execute("DELETE FROM naver_time_overrides WHERE booking_id=?", (normalized["booking_id"],))
-                    if not keep_card_for_onsite_payment:
+                    # API cancellation alone is not enough: staff payment
+                    # conversions have the same API status but send no customer
+                    # cancellation email. Only an email-confirmed cancellation
+                    # may hide the operational card or increment no-show.
+                    cursor.execute(
+                        "SELECT 1 FROM naver_customer_cancellation_emails WHERE booking_id=?",
+                        (normalized["booking_id"],),
+                    )
+                    customer_cancel_email = cursor.fetchone() is not None
+                    if customer_cancel_email:
+                        cursor.execute("DELETE FROM naver_time_overrides WHERE booking_id=?", (normalized["booking_id"],))
+                    if customer_cancel_email and not keep_card_for_onsite_payment:
                         if register_cancellation(cursor, normalized["booking_id"], normalized["use_date"]):
                             same_day_cancellations += 1
                         if dashboard_booking_id:
@@ -283,8 +400,19 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                                 "UPDATE naver_booking_card_links SET card_state='cancelled_hidden', updated_at=CURRENT_TIMESTAMP WHERE booking_id=?",
                                 (normalized["booking_id"],),
                             )
-                    cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
+                        cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
                 elif normalized["is_actionable"]:
+                    # A customer cancellation email is authoritative even
+                    # while Naver's reservation API is temporarily stale.
+                    # Do not recreate a card that the email path just hid.
+                    cursor.execute(
+                        "SELECT 1 FROM naver_customer_cancellation_emails WHERE booking_id=?",
+                        (normalized["booking_id"],),
+                    )
+                    if cursor.fetchone() is not None:
+                        cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
+                        accepted += 1
+                        continue
                     restore_reversed_cancellation(cursor, normalized["booking_id"], normalized["use_date"])
                     if keep_card_for_onsite_payment:
                         accepted += 1
@@ -510,16 +638,46 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     ).fetchone()
                     if not linked:
                         continue
-                    if linked[0]:
-                        cursor.execute("DELETE FROM bookings WHERE id=?", (linked[0],))
+                    # The mapping row has a foreign key to bookings. Remove
+                    # that link first, then remove the grey placeholder card.
                     cursor.execute(
                         "DELETE FROM naver_manual_stock_blocks WHERE room=? AND use_date=? AND use_time_key=?",
                         (room, use_date, use_time_key),
                     )
+                    if linked[0]:
+                        cursor.execute("DELETE FROM bookings WHERE id=?", (linked[0],))
                     applied += 1
         if applied:
             socketio.emit("naver_manual_stock_updated", {"applied": applied})
         return jsonify(success=True, applied=applied)
+
+    @blueprint.get("/api/integrations/naver/manual-stock-blocks")
+    def list_manual_stock_blocks():
+        """Return only the currently displayed staff manual-close placeholders.
+
+        The browser uses this small list to remove a grey card only after its
+        own authenticated Naver availability response confirms the slot has
+        been reopened and is not occupied by a native reservation.
+        """
+        expected_token = os.getenv("NAVER_AGENT_TOKEN", "")
+        provided_token = request.headers.get("x-jumping-agent-token", "")
+        if not expected_token or not hmac.compare_digest(provided_token, expected_token):
+            return jsonify(success=False, message="Unauthorized agent"), 401
+        today = datetime.now().strftime("%Y-%m-%d")
+        with get_db_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT room, use_date, use_time_key
+                  FROM naver_manual_stock_blocks
+                 WHERE use_date >= ?
+                 ORDER BY use_date, use_time_key, room
+                """,
+                (today,),
+            ).fetchall()
+        return jsonify(success=True, items=[
+            {"room": row[0], "date": row[1], "time": row[2].replace("-", ":")}
+            for row in rows
+        ])
 
     @blueprint.get("/api/integrations/naver/stock-events")
     def wait_for_stock_event():
@@ -728,21 +886,22 @@ def normalize_difficulty(value: object) -> str:
     if not difficulty:
         return ""
 
-    labels = (
-        ("basic", "\ubca0\uc774\uc9c1"),
-        ("easy", "\uc774\uc9c0"),
-        ("normal", "\ub178\uba40"),
-        ("hard", "\ud558\ub4dc"),
-        ("challenger", "\ucc4c\ub9b0\uc800"),
-        ("kids", "\uc720\uc544"),
-        ("toddler", "\uc720\uc544"),
-        ("summer", "\uc5ec\ub984"),
-        ("space", "\uc6b0\uc8fc"),
-        ("santa", "\uc0b0\ud0c0"),
-    )
     lower_value = difficulty.casefold()
-    for keyword, label in labels:
-        if keyword in lower_value:
+    # Theme names are checked first because their descriptions may also contain
+    # an average regular-map level such as Basic/Easy.
+    labels = (
+        (("\uc5ec\ub984", "summer"), "\uc5ec\ub984"),
+        (("\uc6b0\uc8fc", "space"), "\uc6b0\uc8fc"),
+        (("\uc0b0\ud0c0", "santa"), "\uc0b0\ud0c0"),
+        (("\ud0a4\uc988", "\uc720\uc544", "kids", "toddler"), "\ud0a4\uc988"),
+        (("challenger", "\ucc4c\ub9b0\uc800"), "\ucc4c\ub9b0\uc800"),
+        (("normal", "\ub178\uba40"), "\ub178\uba40"),
+        (("hard", "\ud558\ub4dc"), "\ud558\ub4dc"),
+        (("easy", "\uc774\uc9c0"), "\uc774\uc9c0"),
+        (("basic", "\ubca0\uc774\uc9c1"), "\ubca0\uc774\uc9c1"),
+    )
+    for keywords, label in labels:
+        if any(keyword in lower_value for keyword in keywords):
             return label
 
     # Keep a manually entered Korean dashboard label as it is.

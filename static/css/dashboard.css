@@ -1595,7 +1595,10 @@
         .cell-view.party-room .p-paid-status { color: #7e22ce; font-weight: 800; }
         .cell-view.party-room .p-team-text { background: #7e22ce !important; border: 1px solid #7e22ce !important; }
         .cell-view.completed { background-color: #f8fafc !important; border-left-color: #94a3b8 !important; opacity: 0.6; }
-        .cell-view.game-running { box-shadow: inset 0 0 0 3px #dc2626 !important; opacity: 1; }
+        .cell-view.game-running {
+            box-shadow: 0 0 0 2px #dc2626, 0 3px 8px rgba(220, 38, 38, 0.22) !important;
+            opacity: 1;
+        }
         .cell-view.completed .p-team-text { background: #000000 !important; border: 1px solid #000000 !important; }
         .cell-view.paid.completed { background-color: #e0e0e0 !important; }
         .cell-view.party-room.completed { background-color: #e0e0e0 !important; }
@@ -1617,7 +1620,7 @@
         }
         .name-meta-row { font-size: 13px; color: var(--text-muted); display: inline-flex; align-items: center;  min-width: 0; flex: 1 1 auto; overflow: hidden; }
         .p-name-text { font-size: 13px;     color: var(--text-muted);     font-weight: 800; }
-        .name-meta-row .p-name-text:not(:empty) ~ .p-level-people-text::before { content: ' /'; color: var(--text-muted); }
+        .name-meta-row .p-name-text:not(:empty) ~ .p-level-people-text::before { content: '/'; color: var(--text-muted); }
         .p-eta-badge {
             display: none;
             font-size: 12px;
@@ -1723,8 +1726,8 @@
             font-weight: 500;
             content: '난이도/인원 미입력';
         }
-        .cell-view.has-booking .p-name-text:empty::before { content: '성함 미입력'; }
-        .cell-view.has-booking .p-team-text:empty::before { content: '개인'; }        .cell-view.has-booking .p-level-people-text:empty::before { content: '난이도/인원 미입력'; }
+        .cell-view.has-booking .p-name-text:empty::before { content: '성함/'; }
+        .cell-view.has-booking .p-team-text:empty::before { content: '팀명'; }        .cell-view.has-booking .p-level-people-text:empty::before { content: '인원/난이도'; }
 
         /* 북킹 카드 - 한 셀에 여러 예약이 스태킹 */
         .booking-card + .booking-card {
@@ -1734,7 +1737,7 @@
         }
         .timeline-table td .booking-card {
             position: relative;
-            z-index: 20;
+            z-index: 30;
         }
         .booking-card { 
             margin: 4px; 
@@ -1751,13 +1754,14 @@
 
         .booking-card.naver-manual-block-card .cell-view {
             background: #e5e7eb !important;
-            border-left-color: #9ca3af !important;
-            color: #6b7280;
+            border-left-color: #64748b !important;
+            color: #1f2937;
             cursor: pointer;
             pointer-events: auto;
         }
         .booking-card.naver-manual-block-card .p-team-text {
-            color: #6b7280 !important;
+            background: #475569 !important;
+            color: #ffffff !important;
             font-weight: 700;
         }
 .booking-card.naver-manual-block-card .p-name-text,
@@ -1800,9 +1804,10 @@
         }
         .team-card-live-badge-wrap {
             position: absolute;
-            bottom: -6px;
-            left: 25px;
-            z-index: 10;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 50;
             pointer-events: none;
             display: flex;
             gap: 3px;
@@ -1822,12 +1827,18 @@
 
         /* 실시간 입장 뱃지 스타일 (블루) */
         .p-res-badge-item.type-entry {
-            color: #000000; 
+            color: #111827;
+            background: #ffffff;
+            border: 1px solid #d1d5db;
+            opacity: 1;
         }
 
         /* 실시간 종료 뱃지 스타일 (차분한 그레이) */
         .p-res-badge-item.type-end {
-            color: #000000; 
+            color: #111827;
+            background: #ffffff;
+            border: 1px solid #d1d5db;
+            opacity: 1;
         }
 
         .p-res-badge-item.type-diff.is-ready {
@@ -1904,6 +1915,173 @@
         .queue-finish-btn.restore { background: #f59e0b !important; }
         .queue-finish-btn.restore:hover { background: #e96b05 !important; }
         .queue-finish-btn svg { stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        /* 게임카드: 좌측 정보 70%, 우측 동작 버튼 30% (기능 마크업은 그대로 유지) */
+        .booking-card .cell-view {
+            position: relative;
+            min-height: 54px;
+            padding: 0 7px 5px;
+            background-image: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,250,252,0.72));
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+        }
+        .booking-card .cell-view.completed,
+        .booking-card.naver-manual-block-card .cell-view {
+            background-image: none;
+        }
+        .booking-card .booking-info {
+            width: calc(80% - 4px);
+            max-width: calc(80% - 4px);
+            min-width: 0;
+            overflow: visible;
+            display: grid;
+            grid-template-columns: calc(10em + 8px) minmax(0, 1fr);
+            grid-template-rows: auto auto;
+            column-gap: 5px;
+            row-gap: 4px;
+            align-content: center;
+        }
+        /* 좌측 정보: 팀명 · 고객/인원/방크기/난이도 / 결제 상세 */
+        .booking-card .team-main-row { display: contents; }
+        .booking-card .p-team-text {
+            grid-column: 1;
+            grid-row: 1;
+            width: 10em;
+            min-width: 10em;
+            max-width: 10em;
+            box-sizing: border-box;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 19px;
+            border-radius: 4px;
+            padding: 0 5px;
+            font-weight: 800;
+        }
+        .booking-card .p-paid-status {
+            display: none !important;
+        }
+        .booking-card .cell-view.paid .p-team-text {
+            background: #008800 !important;
+            border-color: #008800 !important;
+        }
+        .booking-card .cell-view.unpaid .p-team-text {
+            background: #dc2626 !important;
+            border-color: #dc2626 !important;
+        }
+        .booking-card.naver-pending-details .p-team-text,
+        .booking-card.naver-pending-details .cell-view.paid .p-team-text,
+        .booking-card.naver-pending-details .cell-view.unpaid .p-team-text {
+            color: #422006 !important;
+            background: #facc15 !important;
+            border-color: #eab308 !important;
+        }
+        .booking-card .name-meta-row {
+            grid-column: 2;
+            grid-row: 1;
+            min-width: 0;
+            overflow: visible;
+            padding-left: 2px;
+            box-sizing: border-box;
+            white-space: nowrap;
+            font-size: 11px;
+            letter-spacing: -0.25px;
+            color: #334155;
+            font-weight: 700;
+            line-height: 19px;
+        }
+        .booking-card .name-meta-row .p-name-text,
+        .booking-card .name-meta-row .p-level-people-text {
+            flex: 0 0 auto;
+            overflow: visible;
+            text-overflow: clip;
+            font-size: 11px;
+        }
+        .booking-card .p-payment-text {
+            display: contents !important;
+        }
+        .booking-card .p-payment-amounts {
+            grid-column: 1 / -1;
+            grid-row: 2;
+            min-width: 0;
+            line-height: 1.25;
+            min-height: 13px;
+            padding: 1px 2px 0;
+            color: #2563eb;
+            font-size: 12px;
+            font-weight: 800;
+        }
+        .timeline-table td:has(.booking-card) {
+            vertical-align: top !important;
+        }
+        .booking-card .booking-status {
+            position: absolute;
+            top: 2px;
+            right: 5px;
+            bottom: 3px;
+            width: calc(20% - 8px);
+            padding-left: 0;
+            display: block;
+            border-left: 1px solid #dbe4ee;
+            padding-left: 3px;
+        }
+        .booking-card .queue-action-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            gap: 3px;
+            height: 100%;
+            width: 100%;
+            justify-items: center;
+            align-items: center;
+        }
+        .booking-card .queue-action-row button {
+            width: min(100%, 27px);
+            aspect-ratio: 1 / 1;
+            min-width: 24px;
+            min-height: 24px;
+            height: auto;
+            padding: 2px;
+            border-radius: 5px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.13);
+        }
+        .booking-card .queue-action-row button.is-completed-disabled,
+        .booking-card .queue-action-row button:disabled {
+            opacity: 0.36;
+            cursor: not-allowed;
+            filter: grayscale(0.45);
+            box-shadow: none;
+        }
+        .booking-card .queue-transfer-btn { background: #2563eb !important; }
+        .booking-card .queue-transfer-btn:hover { background: #1d4ed8 !important; }
+        .booking-card .queue-game-btn.start { background: #f97316 !important; }
+        .booking-card .queue-game-btn.start:hover { background: #ea580c !important; }
+        .booking-card .queue-copy-btn { background: #7c3aed !important; }
+        .booking-card .queue-copy-btn:hover { background: #6d28d9 !important; }
+        .booking-card .queue-finish-btn { background: #16a34a !important; }
+        .booking-card .queue-finish-btn:hover { background: #15803d !important; }
+        .booking-card .queue-finish-btn.restore { background: #f59e0b !important; }
+        .booking-card .queue-finish-btn.restore:hover { background: #d97706 !important; }
+        .booking-card .queue-finish-btn.restore svg { stroke: #78350f !important; }
+        .booking-card.naver-manual-block-card .p-team-text,
+        .booking-card.naver-manual-block-card .cell-view.paid .p-team-text,
+        .booking-card.naver-manual-block-card .cell-view.unpaid .p-team-text {
+            background: #008800 !important;
+            border-color: #008800 !important;
+            color: #ffffff !important;
+        }
+        /* 표시 순서: 전송 · 시작 / 복사 · 완료 */
+        .booking-card .queue-transfer-btn { grid-column: 1; grid-row: 1; }
+        .booking-card .queue-game-btn { grid-column: 2; grid-row: 1; }
+        .booking-card .queue-copy-btn { grid-column: 1; grid-row: 2; }
+        .booking-card .queue-finish-btn { grid-column: 2; grid-row: 2; }
+        .booking-card .p-payment-text {
+            gap: 3px;
+            overflow: visible;
+        }
+        .booking-card .p-payment-amounts {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .queue-transfer-status { min-height: 21px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 13px;  font-weight: 700;  padding: 2px 4px; }
         .queue-transfer-status.waiting { color: #1976d2 !important; background: #ffd700 !important;}
         .queue-transfer-status.completed { color: #111 !important;}

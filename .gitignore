@@ -8,6 +8,7 @@ remote_bridge/*
 chrome_extension/local-config.js
 config/google_key.json
 config/credentials.json
+config/manager-login.clixml
 *.pem
 *.p12
 

@@ -21,5 +21,5 @@ SERVER_LOG_DIR = Path(
     )
 ).resolve()
 LOG_DIR = Path(os.getenv("GAME_MONITOR_LOG_DIR", PROJECT_ROOT / "logs")).resolve()
-SERVER_HOST = os.getenv("GAME_MONITOR_HOST", "127.0.0.1")
-SERVER_PORT = int(os.getenv("GAME_MONITOR_PORT", "8081"))
+SERVER_HOST = os.getenv("GAME_MONITOR_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("GAME_MONITOR_PORT", "8080"))

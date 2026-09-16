@@ -7,17 +7,22 @@ const BUSINESS_TYPE_ID = 12;
 const CONFIRMED_STATUS_CODE = "RC03";
 const RESERVATION_ALARM_NAME = "suwonyeongtong-naver-poll";
 const STOCK_ALARM_NAME = "suwonyeongtong-naver-stock-poll";
-const DELIVERY_STATE_KEY = "delivery-state";
+// v2 deliberately starts with an empty delivery history.  The old history
+// belonged to the mail-first flow and could suppress the first full API
+// delivery after switching the dashboard to the new reservation pipeline.
+// Booking IDs remain de-duplicated by the server-side card-link table.
+const DELIVERY_STATE_KEY = "delivery-state-v4";
 const STOCK_STATE_KEY = "naver-stock-closed-by-extension";
 const NAVER_WRITE_AUTH_KEY = "naver-write-auth";
 const EXPECTED_STOCK_WRITE_KEY = "expected-extension-stock-writes";
 const KST_TIME_ZONE = "Asia/Seoul";
-const EXTENSION_BUILD = "suwonyt-reservation-form-fix-20260909-01";
+const EXTENSION_BUILD = "suwonyt-stock-release-today-20260910-01";
 let roomItemIdsCache = null;
 let roomItemIdsCacheAt = 0;
 let stockEventWatcherRunning = false;
 let emailHintWatcherRunning = false;
 let stockSyncInFlight = null;
+let stockSyncQueued = false;
 
 function requireConfig() {
   if (!Number.isFinite(Number(CONFIG.businessId)) || !String(CONFIG.endpoint || "").startsWith("http")) {
@@ -82,7 +87,10 @@ async function discoverItemIds(startIso, endIso) {
   url.searchParams.set("businessTypeId", String(BUSINESS_TYPE_ID));
   url.searchParams.set("startDate", startIso);
   url.searchParams.set("endDate", endIso);
-  url.searchParams.set("includeTodaySchedule", "false");
+  // A dashboard card can be deleted on the same day it was closed.  Include
+  // today's schedules so the safety check can verify that no real Naver
+  // reservation owns the slot before reopening it.
+  url.searchParams.set("includeTodaySchedule", "true");
   url.searchParams.set("includeTotal", "false");
   url.searchParams.set("interval", "30");
   url.searchParams.set("schedules", "business,bizItems");
@@ -425,11 +433,22 @@ async function mirrorManualNaverBlocks(availabilityByItem, roomItemIds, desired,
   const items = [];
   const dates = stockCheckDates();
   const times = stockCheckTimes();
+  const today = kstDateKey();
+  const nowParts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: KST_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+  const nowTime = `${nowParts.find(part => part.type === "hour")?.value || "00"}:${nowParts.find(part => part.type === "minute")?.value || "00"}`;
   for (const [room, rawItemId] of Object.entries(roomItemIds)) {
     const item = availabilityByItem.get(Number(rawItemId));
     if (!item) continue;
     for (const date of dates) {
       for (const time of times) {
+        // Past slots can be stock 0 simply because their operating time has
+        // ended.  They are never staff-made manual closes.
+        if (date === today && time <= nowTime) continue;
         const key = `${room}|${date}|${time}`;
         if (desired.has(key) || closed[key]) continue;
         const slotStatus = getSlotAvailability(item, date, time);
@@ -439,30 +458,83 @@ async function mirrorManualNaverBlocks(availabilityByItem, roomItemIds, desired,
       }
     }
   }
-  // The local endpoint is intentionally add-only here. It never deletes a
-  // card during a background availability read.
-  for (let index = 0; index < items.length; index += 30) {
-    const batch = items.slice(index, index + 30);
+  // The local endpoint accepts one staff-style schedule change at a time.
+  // Sending each discovered slot in that exact format makes the availability
+  // fallback work even if Naver hides the original PATCH body from Chrome.
+  // It is intentionally add-only: a background read must never delete a
+  // locally visible manual-close card.
+  for (const item of items) {
     const endpoint = CONFIG.manualStockEndpoint || String(CONFIG.endpoint || "").replace("/reservations", "/manual-stock");
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json", "x-jumping-agent-token": CONFIG.agentToken },
-      body: JSON.stringify({ items: batch })
+      body: JSON.stringify({ source: "staff-schedule-patch", items: [item] })
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || body.success === false) throw new Error(body.message || `manual stock mirror HTTP ${response.status}`);
     if (Number(body.applied || 0) > 0) {
-      console.info("[SuwonYT Naver] manual stock mirrored", { applied: body.applied, blocked: batch.length });
+      console.info("[SuwonYT Naver] manual stock mirrored", { room: item.room, date: item.date, time: item.time, applied: body.applied });
+    }
+  }
+}
+
+async function reconcileManualNaverBlockReleases(availabilityByItem, roomItemIds) {
+  // A staff reopening is normally reported through the schedule PATCH hook.
+  // If Naver redraws the calendar before Chrome receives that PATCH, reconcile
+  // only the grey cards already known by the local server.  This never scans
+  // arbitrary slots and never removes a card while Naver still reports stock
+  // 0 or a native reservation.
+  if (!(availabilityByItem instanceof Map) || availabilityByItem.size === 0) return;
+  const endpoint = CONFIG.manualStockBlocksEndpoint
+    || String(CONFIG.endpoint || "").replace("/reservations", "/manual-stock-blocks");
+  const response = await fetch(endpoint, {
+    headers: { "x-jumping-agent-token": CONFIG.agentToken }, cache: "no-store"
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.success === false || !Array.isArray(body.items)) {
+    throw new Error(body.message || `manual stock block list HTTP ${response.status}`);
+  }
+  const manualEndpoint = CONFIG.manualStockEndpoint
+    || String(CONFIG.endpoint || "").replace("/reservations", "/manual-stock");
+  for (const item of body.items) {
+    const room = String(item?.room || "").toUpperCase();
+    const roomItemId = Number(roomItemIds?.[room]);
+    const date = String(item?.date || "");
+    const time = String(item?.time || "");
+    if (!Number.isFinite(roomItemId) || !date || !time) continue;
+    const slotStatus = getSlotAvailability(availabilityByItem.get(roomItemId), date, time);
+    if (!slotStatus || Number(slotStatus.stock) <= 0 || hasNativeBooking(slotStatus)) continue;
+    const releaseResponse = await fetch(manualEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-jumping-agent-token": CONFIG.agentToken },
+      body: JSON.stringify({ source: "staff-schedule-patch", items: [{ room, date, time, blocked: false }] })
+    });
+    const releaseBody = await releaseResponse.json().catch(() => ({}));
+    if (!releaseResponse.ok || releaseBody.success === false) {
+      throw new Error(releaseBody.message || `manual stock release HTTP ${releaseResponse.status}`);
+    }
+    if (Number(releaseBody.applied || 0) > 0) {
+      console.info("[SuwonYT Naver] manual stock release reconciled", { room, date, time });
     }
   }
 }
 
 async function syncLocalStockToNaver() {
   if (stockSyncInFlight) {
-    console.info("[SuwonYT Naver] stock reconciliation already running");
+    // A card may be saved while a previous reconciliation is still reading
+    // Naver availability.  Do not make the new card wait for the next
+    // 30-second safety alarm: run exactly one fresh pass immediately after
+    // the active pass finishes.
+    stockSyncQueued = true;
+    console.info("[SuwonYT Naver] stock reconciliation queued after active pass");
     return stockSyncInFlight;
   }
-  stockSyncInFlight = syncLocalStockToNaverInternal();
+  stockSyncInFlight = (async () => {
+    do {
+      stockSyncQueued = false;
+      await syncLocalStockToNaverInternal();
+    } while (stockSyncQueued);
+  })();
   try {
     return await stockSyncInFlight;
   } finally {
@@ -510,6 +582,16 @@ async function syncLocalStockToNaverInternal() {
     // so an unverified slot is deliberately left unchanged.
     console.warn("[SuwonYT Naver] availability check skipped", error.message || error);
   }
+  try {
+    await reconcileManualNaverBlockReleases(availabilityByItem, roomItemIds);
+  } catch (error) {
+    // A reconciliation failure must never interrupt reservation collection or
+    // the local-card stock plan. The next 30-second stock cycle retries it.
+    console.warn("[SuwonYT Naver] manual stock release reconciliation skipped", error.message || error);
+  }
+  // Manual closes are reflected only from the actual Naver schedule PATCH
+  // event.  Availability alone is ambiguous because Naver also reports
+  // naturally unavailable operating slots as stock 0.
   const availabilityMs = Math.round(performance.now() - startedAt);
   let writeAuth = null;
 
@@ -744,8 +826,33 @@ async function ensureAlarm() {
   chrome.alarms.create(STOCK_ALARM_NAME, { periodInMinutes: stockPeriod });
 }
 
-chrome.runtime.onInstalled.addListener(() => ensureAlarm().then(() => { startStockEventWatcher(); startEmailHintWatcher(); return syncAll(); }).catch(error => console.error("[SuwonYT Naver]", error)));
-chrome.runtime.onStartup.addListener(() => ensureAlarm().then(() => { startStockEventWatcher(); startEmailHintWatcher(); }).catch(error => console.error("[SuwonYT Naver]", error)));
+// Reloading an unpacked extension does not re-run declarative content scripts
+// inside an already-open Naver calendar tab.  Inject the two tiny schedule
+// listeners explicitly so a staff stock edit is observed without requiring a
+// manual page refresh.
+async function ensureNaverScheduleHooks() {
+  const tabs = await chrome.tabs.query({ url: "https://partner.booking.naver.com/*" });
+  for (const tab of tabs) {
+    if (!tab.id) continue;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["naver-schedule-page-hook.js"],
+        world: "MAIN"
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["naver-schedule-bridge.js"]
+      });
+      console.info("[SuwonYT Naver] schedule hooks ensured", { tabId: tab.id });
+    } catch (error) {
+      console.warn("[SuwonYT Naver] schedule hook injection skipped", error.message || error);
+    }
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => ensureAlarm().then(async () => { await ensureNaverScheduleHooks(); startStockEventWatcher(); startEmailHintWatcher(); return syncAll(); }).catch(error => console.error("[SuwonYT Naver]", error)));
+chrome.runtime.onStartup.addListener(() => ensureAlarm().then(async () => { await ensureNaverScheduleHooks(); startStockEventWatcher(); startEmailHintWatcher(); }).catch(error => console.error("[SuwonYT Naver]", error)));
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === RESERVATION_ALARM_NAME) syncReservations().catch(error => console.error("[SuwonYT Naver]", error));
   if (alarm.name === STOCK_ALARM_NAME) {
@@ -754,6 +861,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 chrome.action.onClicked.addListener(() => {
   console.info("[SuwonYT Naver] manual sync requested", { build: EXTENSION_BUILD });
+  ensureNaverScheduleHooks().catch(error => console.warn("[SuwonYT Naver] schedule hook setup skipped", error.message || error));
   startStockEventWatcher();
   startEmailHintWatcher();
   syncAll(true).catch(error => console.error("[SuwonYT Naver]", error));

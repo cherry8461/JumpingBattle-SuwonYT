@@ -1,11 +1,11 @@
 $ErrorActionPreference = 'Stop'
 
 # 신규본만 안전하게 종료합니다.
-# - 8081 포트의 대시보드 서버
+# - 8080 포트의 대시보드 서버
 # - 수원영통 MQTT 브릿지
 # 점핑매니저는 종료하지 않습니다.
 
-$serverConnections = Get-NetTCPConnection -State Listen -LocalPort 8081 -ErrorAction SilentlyContinue
+$serverConnections = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
 $serverPids = @($serverConnections | Select-Object -ExpandProperty OwningProcess -Unique)
 
 foreach ($processId in $serverPids) {
@@ -25,8 +25,8 @@ foreach ($bridge in $bridgeProcesses) {
 }
 
 Start-Sleep -Milliseconds 800
-if (Get-NetTCPConnection -State Listen -LocalPort 8081 -ErrorAction SilentlyContinue) {
-    throw '8081 포트가 아직 열려 있습니다.'
+if (Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue) {
+    throw '8080 포트가 아직 열려 있습니다.'
 }
 
 Write-Host '신규본 대시보드와 브릿지 종료 완료. 점핑매니저는 계속 실행 중입니다.' -ForegroundColor Green

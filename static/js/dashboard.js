@@ -17,6 +17,12 @@ window.addEventListener('DOMContentLoaded', () => {
             refreshWalkInList();
             if (typeof loadBookings === 'function') loadBookings();
         });
+        socket.on('naver_email_hint_received', () => {
+            // The email signal creates a provisional timetable card before
+            // Naver's detail API has caught up.
+            refreshWalkInList();
+            if (typeof loadBookings === 'function') loadBookings();
+        });
         socket.on('naver_manual_stock_updated', () => {
             if (typeof loadBookings === 'function') loadBookings();
         });
@@ -177,18 +183,12 @@ async function refreshWalkInList() {
         const walkinData = await walkinRes.json(); // 현장 워크인 배열
         const naverData = await naverRes.json();   // 네이버 예약 배열
 
-        const filteredNaverData = naverData.filter(item => {
-            const isPartyRoom = item.room && item.room.includes('파티룸');
-            // 이미 확인 처리 완료된 파티룸은 대기 배열에 절대 끼워주지 않습니다.
-            if (isPartyRoom && item.status === 'CONFIRMED') {
-                return false; 
-            }
-            return true;
-        });
+        // 파티룸 예약도 직원이 원하는 타임테이블 칸으로 직접 드래그할 수 있도록 표시한다.
+        const filteredNaverData = naverData;
 
         // 🟢 2. 고유 ID 체계를 만들어서 새 손님이 왔는지 추적합니다.
         // 네이버 예약 데이터에는 식별을 위해 주입단계에서 구분을 지어줍니다.
-        const processedNaver = naverData.map(item => ({ ...item, is_naver: true }));
+        const processedNaver = filteredNaverData.map(item => ({ ...item, is_naver: true }));
         const combinedData = [...walkinData, ...processedNaver];
 
         const currentIds = new Set(combinedData.map(item => {
@@ -231,6 +231,31 @@ async function refreshWalkInList() {
             
             const itemId = item.is_naver ? `naver-${item.booking_id}` : getWalkInItemId(item);
             card.id = itemId;
+            card.draggable = true;
+            card.classList.add('intake-drag-source');
+            card.addEventListener('dragstart', (event) => {
+                const adultCount = parseInt(item.adult_count, 10) || 0;
+                const childCount = parseInt(item.child_count, 10) || 0;
+                const people = (adultCount + childCount) || (parseInt(item.people, 10) || 0);
+                const payload = {
+                    type: 'intake',
+                    sourceType: item.is_naver ? 'naver' : 'walkin',
+                    sourceId: item.is_naver ? String(item.booking_id || '') : String(item.id || ''),
+                    name: item.name || '',
+                    phone: item.phone || '',
+                    team: item.team || '',
+                    level: normalizeLevelShortcut(item.difficulty || item.level || ''),
+                    people,
+                    adultCount,
+                    childCount,
+                    roomSize: item.room_size || item.room || '',
+                    roomFast: !!item.room_fast,
+                    partyRoom: item.is_naver && String(item.room || item.product || item.product_name || '').includes('파티룸'),
+                    reservationTime: item.time || ''
+                };
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('application/json', JSON.stringify(payload));
+            });
             
             if (newlyArrivedIds.has(itemId)) {
                 card.classList.add('is-new');
@@ -490,7 +515,7 @@ async function handleConfirmNaver(bookingId) {
         // 5. ⭐️ addCard 엔진을 통해 타임테이블 셀에 카드 시각적 배치
         bookingData.team = bookingItem.team || bookingData.team;
         bookingData.phone = bookingItem.phone || bookingData.phone;
-        bookingData.level = bookingItem.difficulty || bookingData.level;
+        bookingData.level = normalizeLevelShortcut(bookingItem.difficulty || bookingData.level);
         bookingData.people = bookingItem.people || bookingData.people;
         const card = addCard(cell, bookingData, 0, isPast);
 
@@ -1318,7 +1343,7 @@ function updateCardQueueStatus(card) {
         return;
     }
 
-    statusEl.textContent = isPaid ? '결제완료' : '결제미완료';
+    statusEl.textContent = isPaid ? '결제O' : '결제X';
     statusEl.classList.remove('waiting');
     // 결제미완료 상태에서 완료 버튼을 누르면 회색 처리(완료 class)는 유지, 문구는 결제미완료 유지
     statusEl.classList.toggle('completed', isCompleted);
@@ -1955,6 +1980,7 @@ async function copyCardInfo(buttonEl) {
 async function sendCardToGame(buttonEl) {
     const card = buttonEl ? buttonEl.closest('.booking-card') : null;
     if (!card || card.dataset.manualNaverBlock === 'true') return false;
+    if (card.querySelector('.p-completed')?.checked) return false;
 
     const cell = card.closest('td[id^="cell-"]');
     // Always trust the card's current timetable cell, not a stale room-size
@@ -2043,7 +2069,17 @@ function setCardGameRunning(card, isRunning) {
     card.dataset.paymentData = JSON.stringify(paymentData);
     card.dataset.gameRunning = isRunning ? 'true' : 'false';
     card.querySelector('.cell-view')?.classList.toggle('game-running', isRunning);
-    setGameActionButtonState(card.querySelector('.queue-game-btn'), isRunning);
+    const gameButton = card.querySelector('.queue-game-btn');
+    setGameActionButtonState(gameButton, isRunning);
+    // A legacy start could have marked an actually running game as completed.
+    // Keep its stop button usable, while completed non-running cards remain
+    // locked until staff explicitly restores them.
+    if (gameButton) {
+        const isCompleted = !!card.querySelector('.p-completed')?.checked;
+        const shouldDisable = isCompleted && !isRunning;
+        gameButton.disabled = shouldDisable;
+        gameButton.classList.toggle('is-completed-disabled', shouldDisable);
+    }
 }
 
 function getCardStartExpectation(card, roomId) {
@@ -2200,6 +2236,7 @@ async function toggleCardGame(buttonEl) {
     const card = buttonEl ? buttonEl.closest('.booking-card') : null;
     if (!card || card.dataset.manualNaverBlock === 'true') return;
     const isStopping = buttonEl.dataset.gameRunning === 'true';
+    if (card.querySelector('.p-completed')?.checked && !isStopping) return;
     const action = isStopping ? 'stop-game' : 'start-game';
     const actionLabel = isStopping ? '정지' : '시작';
 
@@ -2256,13 +2293,8 @@ async function toggleCardGame(buttonEl) {
             setCardGameRunning(card, false);
             await saveCard(card);
         } else {
-            // A successful game start keeps the original completed-card flow,
-            // then adds a separate red outline while the game is running.
-            if (!card.querySelector('.p-completed')?.checked) {
-                card.querySelector('.p-completed').checked = true;
-                updateCardView(card);
-                updateCardQueueStatus(card);
-            }
+            // Starting a game changes only the running state. Completion is
+            // deliberately handled later by the separate finish button.
             setCardGameRunning(card, true);
             await saveCard(card);
         }
@@ -2571,6 +2603,123 @@ function getManualNaverBlockCard(cell) {
             || card.querySelector('.p-team-text')?.textContent.trim() === '네이버 수동 마감') || null;
 }
 
+function isBlankCellButtonCard(card) {
+    if (!card || card.dataset.manualNaverBlock === 'true') return false;
+    const paymentData = parsePaymentDataSafe(card.dataset.paymentData) || {};
+    const team = card.querySelector('.p-team-text')?.textContent.trim() || '';
+    const name = card.querySelector('.p-name-text')?.textContent.trim() || '';
+    const meta = parseCardMetaText(card.querySelector('.p-level-people-text')?.textContent || '');
+    const hasMeaningfulInput = !!team || !!name || !!meta.level || !!meta.people;
+    return !hasMeaningfulInput && (
+        card.dataset.createdFromCellButton === 'true'
+        || paymentData.dashboardPlaceholder === true
+    );
+}
+
+function getIntakeDropReplacementCard(targetCell, event) {
+    const hovered = event.target.closest('.booking-card');
+    if (hovered && hovered.closest('td') === targetCell
+        && (hovered.dataset.manualNaverBlock === 'true' || isBlankCellButtonCard(hovered))) {
+        return hovered;
+    }
+    return [...targetCell.querySelectorAll('.booking-card')]
+        .find(card => card.dataset.manualNaverBlock === 'true' || isBlankCellButtonCard(card)) || null;
+}
+
+function getIntakeRoomFlags(data, targetRoom) {
+    const sourceSize = String(data.roomSize || '').trim();
+    if (data.sourceType === 'walkin' && ['소형', '중형', '대형'].includes(sourceSize)) {
+        return { F: !!data.roomFast, S: sourceSize === '소형', M: sourceSize === '중형', L: sourceSize === '대형' };
+    }
+    return {
+        F: false,
+        S: String(targetRoom || '').toUpperCase().startsWith('C'),
+        M: String(targetRoom || '').toUpperCase().startsWith('B'),
+        L: false
+    };
+}
+
+async function consumeIntakeSource(data) {
+    let response;
+    if (data.sourceType === 'naver') {
+        response = await fetch('/api/naver-bookings/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ booking_id: data.sourceId })
+        });
+    } else {
+        response = await fetch('/api/walkin/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: parseInt(data.sourceId || '0', 10) })
+        });
+    }
+    if (!response.ok) throw new Error('대기열 완료 처리에 실패했습니다.');
+}
+
+async function placeIntakeOnTimeline(targetCell, event, data, isPast) {
+    const replacement = getIntakeDropReplacementCard(targetCell, event);
+    const label = data.team || data.name || (data.sourceType === 'naver' ? '네이버 예약' : '워크인');
+    if (replacement) {
+        const kind = replacement.dataset.manualNaverBlock === 'true' ? '네이버 수동마감 카드' : '빈 카드';
+        const accepted = await showGameCardConfirmPopup(
+            replacement,
+            `${kind}를 ${label} 정보로 교체할까요?`,
+            '기존 카드 위치와 ID는 유지하고 대기자 정보로 덮어씁니다.'
+        );
+        if (!accepted) return;
+    }
+
+    const targetRoom = targetCell.id.split('-')[3] || '';
+    const roomFlags = getIntakeRoomFlags(data, targetRoom);
+    const roomFlagLabel = roomFlagLabelFromFlags(roomFlags);
+    const card = replacement || addCard(targetCell, {}, 0, isPast);
+    const priorPayment = parsePaymentDataSafe(card.dataset.paymentData) || {};
+    const paymentData = {
+        ...priorPayment,
+        dashboardPlaceholder: false,
+        naverManualBlock: false,
+        totalPeople: data.people || '',
+        adultCount: data.adultCount || 0,
+        childCount: data.childCount || 0,
+        roomFlags,
+        roomFlagLabel,
+        partyRoom: !!data.partyRoom
+    };
+    if (data.sourceType === 'naver') {
+        paymentData.isBooker = true;
+        paymentData.depositPaid = true;
+        paymentData.depositAmount = 5000;
+        paymentData.reservationTime = data.reservationTime || formatTimeKeyForReservationBadge(
+            `${targetCell.id.split('-')[1]}-${targetCell.id.split('-')[2]}`
+        );
+        paymentData.naverBookingId = data.sourceId;
+    }
+
+    card.dataset.manualNaverBlock = 'false';
+    card.dataset.createdFromCellButton = 'false';
+    card.classList.remove('naver-manual-block-card');
+    card.dataset.phone = data.phone || '';
+    card.dataset.paymentData = JSON.stringify(paymentData);
+    updateCard(card, {
+        name: data.name || '',
+        team: String(data.team || '').slice(0, 10),
+        phone: data.phone || '',
+        level: data.level || '',
+        people: data.people || '',
+        paid: false,
+        completed: false,
+        roomFlagLabel,
+        payment_data: card.dataset.paymentData
+    });
+    applyCardRoomFlagsForRoom(card, targetRoom);
+    await saveCard(card);
+    await consumeIntakeSource(data);
+    await refreshWalkInList();
+    updateAllCardQueueStatuses();
+    recomputeReservationConflictIndicators();
+}
+
 async function clearManualNaverBlockForDrop(targetCell, label) {
     const manualCard = getManualNaverBlockCard(targetCell);
     if (!manualCard) return true;
@@ -2848,6 +2997,13 @@ async function drop(event) {
             const dragged = document.querySelector(`.queue-item-manual[data-qid="${data.qid}"]`);
             if (dragged) dragged.remove();
             updateAllCardQueueStatuses();
+        } else if (data.type === 'intake') {
+            try {
+                await placeIntakeOnTimeline(targetCell, event, data, isPast);
+            } catch (error) {
+                console.error('대기 항목 드래그 입력 실패:', error);
+                showToast(error.message || '대기 항목 입력에 실패했습니다.', targetCell);
+            }
         }
     }
 }
@@ -3678,8 +3834,17 @@ function buildCardPaymentHtml(paymentData) {
 }
 
 function buildCardMetaHtml(level, people, roomFlagLabel) {
-    const peoplePart = people ? ` ${people}명` : '-';
-    const levelPart = level || '미입력';
+    // 빈 카드도 정보 줄의 폭이 흔들리지 않도록 실제 값이 없을 때는
+    // 안내용 표기만 보여 줍니다. parseCardMetaText에서 다시 빈 값으로
+    // 처리하므로 이 표기가 DB의 실제 입력값으로 저장되지는 않습니다.
+    const rawPeople = String(people ?? '').trim();
+    const rawLevel = String(level ?? '').trim();
+    const peoplePart = rawPeople && rawPeople !== '-' && rawPeople !== '미입력' && rawPeople !== '인원'
+        ? `${rawPeople.replace(/명$/u, '')}명`
+        : '인원';
+    const levelPart = rawLevel && rawLevel !== '-' && rawLevel !== '미입력' && rawLevel !== '난이도'
+        ? rawLevel
+        : '난이도';
     
     const flag = (roomFlagLabel && roomFlagLabel !== '-') ? roomFlagLabel : '-';
 
@@ -3709,13 +3874,13 @@ function buildCardMetaHtml(level, people, roomFlagLabel) {
         cssVar = '--space-color';
     } else if (cleanLevel.includes('santa') || cleanLevel.includes('산타')) {
         cssVar = '--santa-color';
-    } else if (cleanLevel === '미입력' || cleanLevel === '-') {
+    } else if (cleanLevel === '미입력' || cleanLevel === '난이도' || cleanLevel === '-') {
         cssVar = '--text-muted'; // 🚨 미입력 상태 감지
     }
     
     // ✨ 최종 결과물 리턴 (levelPart 자리에 색상이 입혀진 levelHtml을 주입합니다)
     const isMuted = (cssVar === '--text-muted');
-    const borderStyle = isMuted ? 'none' : `10px solid var(${cssVar})`;
+    const borderStyle = isMuted ? 'none' : `5px solid var(${cssVar})`;
     const fontColor = isMuted ? 'var(--text-muted)' : 'var(--text-main)';
     const fontStyle = isMuted ? 'normal' : '800';
 
@@ -3731,7 +3896,7 @@ function buildCardMetaHtml(level, people, roomFlagLabel) {
             ${levelPart}
         </span>
     `;
-    return `${peoplePart} / ${flagHtml} / ${levelHtml}`;
+    return `${peoplePart}/${flagHtml}/${levelHtml}`;
 }
 
 function parseCardMetaText(text) {
@@ -3743,11 +3908,13 @@ function parseCardMetaText(text) {
 
     // 최신 형식: 인원/사이즈/난이도 (3개 파트)
     if (parts.length >= 3) {
+        const peopleValue = parts[0].replace('명', '').trim();
+        const levelValue = parts.slice(2).join('/').trim();
         return {
-            people: parts[0].replace('명', '').trim(),
+            people: ['인원', '미입력', '-'].includes(peopleValue) ? '' : peopleValue,
             // 빈 문자열이거나 값이 없으면 '-'로 유지
             roomFlagLabel: (parts[1] && parts[1] !== '') ? parts[1] : '-',
-            level: parts.slice(2).join('/').trim()
+            level: ['난이도', '미입력', '-'].includes(levelValue) ? '' : levelValue
         };
     }
 
@@ -3822,8 +3989,26 @@ function applyCardRoomFlagsForRoom(card, roomValue) {
 }
 
 function normalizeLevelShortcut(value) {
-    const raw = (value || '').trim();
+    const raw = String(value || '').trim();
     if (!raw) return '';
+
+    const lower = raw.toLocaleLowerCase('ko-KR');
+    // Theme names take priority in case a theme description also mentions an
+    // average Basic/Easy level.
+    const mappings = [
+        [['\uc5ec\ub984', 'summer'], '\uc5ec\ub984'],
+        [['\uc6b0\uc8fc', 'space'], '\uc6b0\uc8fc'],
+        [['\uc0b0\ud0c0', 'santa'], '\uc0b0\ud0c0'],
+        [['\ud0a4\uc988', '\uc720\uc544', 'kids', 'toddler'], '\ud0a4\uc988'],
+        [['challenger', '\ucc4c\ub9b0\uc800'], '\ucc4c\ub9b0\uc800'],
+        [['normal', '\ub178\uba40'], '\ub178\uba40'],
+        [['hard', '\ud558\ub4dc'], '\ud558\ub4dc'],
+        [['easy', '\uc774\uc9c0'], '\uc774\uc9c0'],
+        [['basic', '\ubca0\uc774\uc9c1'], '\ubca0\uc774\uc9c1']
+    ];
+    for (const [keywords, label] of mappings) {
+        if (keywords.some(keyword => lower.includes(keyword))) return label;
+    }
 
     const first = raw.charAt(0);
     if (onsetMap[first]) {
@@ -5115,7 +5300,7 @@ function createBookingCard() {
                     <div class="p-team-text"></div>
                     <div class="name-meta-row"><span class="p-name-text"></span><span class="p-level-people-text"> </span></div>
                 </div>
-                <div class="p-payment-text"><span class="p-paid-status queue-transfer-status" style="color:#d32f2f;">결제미완료</span><span class="p-payment-amounts"></span>
+                <div class="p-payment-text"><span class="p-paid-status queue-transfer-status" style="color:#d32f2f;">결제X</span><span class="p-payment-amounts"></span>
                     <div class="booking-status">
                         <div class="queue-action-row">
                             <button class="queue-copy-btn" onclick="event.stopPropagation(); copyCardInfo(this)" title="복사"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></button>
@@ -5175,6 +5360,7 @@ function updateCard(card, b) {
         || card.dataset.manualNaverBlock === 'true';
     card.classList.toggle('naver-manual-block-card', isManualNaverBlock);
     card.dataset.manualNaverBlock = isManualNaverBlock ? 'true' : 'false';
+    card.classList.toggle('naver-pending-details', parsed?.naverPendingDetails === true);
 
     view.querySelector('.p-team-text').textContent = isManualNaverBlock ? '네이버 수동 마감' : (b.team || '');
     view.querySelector('.p-name-text').textContent = b.name || '';
@@ -5283,10 +5469,14 @@ function updateCardView(card) {
         badgeWrap.appendChild(conflictEl);
     }
     const delayMin = parseInt(paymentData?.reservationConflict?.delayMinutes, 10) || 0;
+    const hasSlotDuplicate = paymentData?.reservationSlotDuplicate === true;
     const hasDelayConflict = isReservationCard && delayMin > 0;
     setTeamCardBookerBadge(card, isReservationCard, paymentData?.reservationTime || getReservationTimeFromCard(card));
     if (conflictEl) {
-        if (hasDelayConflict) {
+        if (hasSlotDuplicate) {
+            conflictEl.textContent = '타임중복';
+            conflictEl.style.display = 'block';
+        } else if (hasDelayConflict) {
             conflictEl.textContent = `지연(+${delayMin}분)`;
             conflictEl.style.display = 'block';
         } else {
@@ -5294,7 +5484,7 @@ function updateCardView(card) {
             conflictEl.style.display = 'none';
         }
     }
-    view.classList.toggle('reservation-conflict', hasDelayConflict);
+    view.classList.toggle('reservation-conflict', hasSlotDuplicate || hasDelayConflict);
 
     // 구형 카드(결제 체크박스 라벨만 있는 구조)도 새 상태 텍스트 UI로 보정
     let paidStatus = card.querySelector('.p-paid-status');
@@ -5333,6 +5523,14 @@ function updateCardView(card) {
             : '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>';
     }
 
+    const transferBtn = card.querySelector('.queue-transfer-btn');
+    const gameBtn = card.querySelector('.queue-game-btn');
+    [transferBtn, gameBtn].forEach((button) => {
+        if (!button) return;
+        button.disabled = isCompleted;
+        button.classList.toggle('is-completed-disabled', isCompleted);
+    });
+
     const completeBtn = card.querySelector('.queue-complete-btn');
     if (completeBtn) {
         completeBtn.classList.toggle('restore', isCompleted);
@@ -5360,7 +5558,7 @@ function updateCardView(card) {
                 paidStatus.textContent = '파티룸';
                 paidStatus.style.color = '#6a1b9a';
             } else {
-                paidStatus.textContent = isPaid ? '(완료)' : '(미완료)';
+                paidStatus.textContent = isPaid ? '결제O' : '결제X';
                 paidStatus.style.color = isPaid ? '#00aa00' : '#d32f2f';
             }
         }
@@ -5613,9 +5811,13 @@ function openNewBookingModalForCell(cell) {
         phone: '',
         paid: false,
         completed: false,
-        payment_data: null
+        payment_data: JSON.stringify({ dashboardPlaceholder: true })
     });
     card.dataset.createdFromCellButton = 'true';
+    card.dataset.paymentData = JSON.stringify({ dashboardPlaceholder: true });
+    // C방은 소형, B방은 중형을 빈 카드 생성 순간부터 표시합니다.
+    // 모달에서 별도 선택하기 전에도 카드 정보 줄이 일정하게 유지됩니다.
+    applyCardRoomFlagsForRoom(card, cell.id.split('-')[3]);
 
     const view = card.querySelector('.cell-view');
     if (view) openPaymentModalFromTimeline(view);
@@ -6918,7 +7120,7 @@ function checkPaymentMatch() {
     return userTotal === actualPayment && (userTotal > 0 || actualPayment === 0);
 }
 
-function savePaymentInfo(closeAfterSave = true) {
+async function savePaymentInfo(closeAfterSave = true) {
     const totalPeople = parseInt(document.getElementById("totalPeople").value) || 0;
     const adultCount = parseInt(document.getElementById("adultCount").value) || 0;
     const childCount = parseInt(document.getElementById("childCount").value) || 0;
@@ -7039,7 +7241,9 @@ function savePaymentInfo(closeAfterSave = true) {
             }
             syncLinkedQueueItemFromCard(currentPaymentCard);
             updateCardView(currentPaymentCard);
-            saveCard(currentPaymentCard);
+            // 새 빈 카드도 서버 저장이 끝나서 ID를 받은 뒤에만 모달을 닫습니다.
+            // 그렇지 않으면 닫는 순간 임시 카드가 화면에서 제거되어 새로고침 전까지 보이지 않습니다.
+            await saveCard(currentPaymentCard);
             
             // 팀카드 배지 업데이트 (모달 배지 상태 반영)
             setTeamCardBookerBadge(currentPaymentCard, isBooker, reservationTime);

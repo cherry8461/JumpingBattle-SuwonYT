@@ -7,7 +7,7 @@
   "host_permissions": [
     "https://partner.booking.naver.com/*",
     "https://api-partner.booking.naver.com/*",
-    "http://127.0.0.1:8081/*"
+    "http://127.0.0.1:8080/*"
   ],
   "background": {
     "service_worker": "sw.js"
