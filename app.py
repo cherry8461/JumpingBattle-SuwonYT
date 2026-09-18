@@ -1164,7 +1164,7 @@ def scan_existing_log_and_save(path):
                 continue
 
             parse_stats["total"] += 1
-            parse_log_line(line)
+            parse_log_line_safely(line, source="startup-scan")
 
     print(
         f"🔁 스캔 완료 | "
@@ -1362,6 +1362,22 @@ def parse_log_line(line: str):
     return False
 
 
+def parse_log_line_safely(line: str, source="live"):
+    """Keep the monitor alive when one malformed or incompatible line fails."""
+    try:
+        return parse_log_line(line)
+    except Exception:
+        parse_stats["failed"] += 1
+        web.logger.exception(
+            "Ranking log line failed without stopping the monitor "
+            "(source=%s, line=%r)",
+            source,
+            line[:500],
+        )
+        print(f"RANK LINE FAILED | source={source} | monitor continues")
+        return False
+
+
 
 # ========================================================
 # pad 상태
@@ -1467,16 +1483,33 @@ _RANK_PENDING_LOCK = threading.RLock()
 _RANK_RETRY_TIMER = None
 
 
+def _normalize_game_record(data):
+    """Accept both the legacy log-parser payload and queued compatibility rows."""
+    play_time = data.get("time")
+    if not play_time and data.get("play_date") and data.get("play_time"):
+        play_time = f"{data['play_date']} {data['play_time']}"
+    return {
+        "time": play_time,
+        "pad_id": data.get("pad_id"),
+        "map_id": data.get("map_id"),
+        "size": data.get("size"),
+        "level": data.get("level"),
+        "team": data.get("team", data.get("team_name")),
+        "score": data.get("score"),
+    }
+
+
 def _insert_ranking_row(data, emit_refresh=True):
+    record = _normalize_game_record(data)
     with write_transaction("ranking save", timeout=0.35, attempts=6) as conn:
         cur = conn.execute(
-            """INSERT OR IGNORE INTO rankings
-               (log_id, play_date, play_time, team_name, score, play_count, size, level)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT OR IGNORE INTO game_records
+               (time, pad_id, map_id, size, level, team, score)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
-                data["log_id"], data["play_date"], data["play_time"],
-                data["team_name"], data["score"], data["play_count"],
-                data["size"], data["level"],
+                record["time"], record["pad_id"], record["map_id"],
+                record["size"], record["level"], record["team"],
+                record["score"],
             ),
         )
         inserted = cur.rowcount > 0
@@ -1546,18 +1579,24 @@ def save_to_db(data):
     try:
         _flush_pending_rankings()
         inserted = _insert_ranking_row(data)
+        record = _normalize_game_record(data)
         if inserted:
-            print(f"RANK SAVE | {data['size']} | {data['team_name']} | {data['score']} points")
+            log_stats["db_insert_success"] += 1
+            print(f"RANK SAVE | {record['size']} | {record['team']} | {record['score']} points")
         else:
-            log_stats["duplicates"] += 1
-            print(f"RANK DUPLICATE | {data['size']} | {data['team_name']} | score={data['score']}")
+            log_stats["db_insert_duplicate"] += 1
+            print(f"RANK DUPLICATE | {record['size']} | {record['team']} | score={record['score']}")
         return True
     except sqlite3.OperationalError as error:
         if not is_sqlite_busy_error(error):
             raise
         _queue_pending_ranking(data)
         _schedule_rank_retry()
-        print(f"RANK QUEUED | database busy | log_id={data.get('log_id')}")
+        record = _normalize_game_record(data)
+        print(
+            "RANK QUEUED | database busy | "
+            f"pad={record.get('pad_id')} time={record.get('time')} score={record.get('score')}"
+        )
         return True
 
 
@@ -1690,7 +1729,7 @@ def log_monitor():
             continue
 
         parse_stats["total"] += 1
-        parse_log_line(line)
+        parse_log_line_safely(line, source="live-follow")
 
         if time.time() - last_report >= 10:
             print(
