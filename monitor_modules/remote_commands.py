@@ -39,8 +39,34 @@ MAP_SERIALS = {
 # only every few seconds.
 _AGENT_SYNC_CACHE = {}
 _AGENT_EXPIRY_CLEANUP_AT = 0.0
+# Remaining time changes on every bridge poll while a game is running.  The
+# dashboard does not need a durable SQLite snapshot twice per second, so cap
+# changed-state persistence at once per second while command polling remains
+# at the bridge's original 0.5-second interval.
+_AGENT_CHANGED_STATE_SECONDS = 1.0
 _AGENT_STATE_HEARTBEAT_SECONDS = 5.0
 _AGENT_EXPIRY_CLEANUP_SECONDS = 15.0
+_AGENT_CONNECTION_GRACE_SECONDS = 15.0
+
+
+def _agent_seen_recently(room_id):
+    """Use every HTTP sync as the live signal, independent of DB throttling."""
+    now = time.monotonic()
+    for state in tuple(_AGENT_SYNC_CACHE.values()):
+        if room_id not in state.get("active_rooms", ()):
+            continue
+        if now - state.get("seen_at", 0) <= _AGENT_CONNECTION_GRACE_SECONDS:
+            return True
+    return False
+
+
+def _stored_agent_is_recent(last_seen_value):
+    """Fallback used just after a server restart, before memory is repopulated."""
+    try:
+        last_seen = datetime.strptime(str(last_seen_value), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return False
+    return datetime.now() - last_seen <= timedelta(seconds=_AGENT_CONNECTION_GRACE_SECONDS)
 
 
 def _agent_state_signature(rooms):
@@ -173,10 +199,13 @@ def create_remote_commands_blueprint(socketio, get_connection):
         monotonic_now = time.monotonic()
         signature = _agent_state_signature(rooms)
         previous = _AGENT_SYNC_CACHE.get(agent_id, {})
-        persist_state = (
-            previous.get("signature") != signature
-            or monotonic_now - previous.get("persisted_at", 0) >= _AGENT_STATE_HEARTBEAT_SECONDS
+        state_changed = previous.get("signature") != signature
+        persist_interval = (
+            _AGENT_CHANGED_STATE_SECONDS
+            if state_changed
+            else _AGENT_STATE_HEARTBEAT_SECONDS
         )
+        persist_state = monotonic_now - previous.get("persisted_at", 0) >= persist_interval
         global _AGENT_EXPIRY_CLEANUP_AT
         expire_commands = monotonic_now - _AGENT_EXPIRY_CLEANUP_AT >= _AGENT_EXPIRY_CLEANUP_SECONDS
 
@@ -199,6 +228,17 @@ def create_remote_commands_blueprint(socketio, get_connection):
                 "people": room.get("people") or 0,
                 "remainingSeconds": room.get("remainingSeconds") or 0,
             }))
+
+        # Every HTTP sync proves that the bridge is alive.  Keep that signal
+        # in memory even when the SQLite snapshot write is intentionally
+        # throttled, otherwise a five-second DB heartbeat can be mistaken for
+        # a disconnected bridge at the exact boundary.
+        _AGENT_SYNC_CACHE[agent_id] = {
+            "signature": previous.get("signature"),
+            "persisted_at": previous.get("persisted_at", 0),
+            "seen_at": monotonic_now,
+            "active_rooms": tuple(active_rooms),
+        }
 
         # A lock can be held briefly by the log monitor or Naver ingestion.
         # Retrying here prevents that normal contention from turning into a
@@ -260,7 +300,10 @@ def create_remote_commands_blueprint(socketio, get_connection):
                 if persist_state or expire_commands or commands:
                     conn.commit()
                 if persist_state:
-                    _AGENT_SYNC_CACHE[agent_id] = {"signature": signature, "persisted_at": monotonic_now}
+                    _AGENT_SYNC_CACHE[agent_id].update({
+                        "signature": signature,
+                        "persisted_at": monotonic_now,
+                    })
                 if expire_commands:
                     _AGENT_EXPIRY_CLEANUP_AT = monotonic_now
                 return jsonify(success=True, commands=commands)
@@ -342,6 +385,8 @@ def create_remote_commands_blueprint(socketio, get_connection):
             agent = cursor.fetchone()
             if not agent:
                 return jsonify(success=False, message=f"{room_id} 방 원격 브리지가 연결되지 않았습니다."), 409
+            if not _agent_seen_recently(room_id) and not _stored_agent_is_recent(agent[1]):
+                return jsonify(success=False, message=f"{room_id} 방 브리지 연결이 끊겼습니다."), 409
             state = _json(agent[0], {})
             map_index = MAP_SERIALS.get(f"{map_size}:{level}")
             if map_index is None:
@@ -395,11 +440,7 @@ def create_remote_commands_blueprint(socketio, get_connection):
             agent = cursor.fetchone()
             if not agent:
                 return jsonify(success=False, message=f"{room_id} 방 브리지가 연결되지 않았습니다."), 409
-            try:
-                last_seen = datetime.strptime(str(agent[1]), "%Y-%m-%d %H:%M:%S")
-            except (TypeError, ValueError):
-                last_seen = datetime.min
-            if datetime.now() - last_seen > timedelta(seconds=5):
+            if not _agent_seen_recently(room_id) and not _stored_agent_is_recent(agent[1]):
                 return jsonify(success=False, message=f"{room_id} 방 브리지 연결이 끊겼습니다."), 409
             state = _json(agent[0], {})
             game_status = str(state.get("status") or "").strip()
@@ -465,11 +506,7 @@ def create_remote_commands_blueprint(socketio, get_connection):
             agent = cursor.fetchone()
             if not agent:
                 return jsonify(success=False, message=f"{room_id} 방 브릿지가 연결되지 않았습니다."), 409
-            try:
-                last_seen = datetime.strptime(str(agent[1]), "%Y-%m-%d %H:%M:%S")
-            except (TypeError, ValueError):
-                last_seen = datetime.min
-            if datetime.now() - last_seen > timedelta(seconds=5):
+            if not _agent_seen_recently(room_id) and not _stored_agent_is_recent(agent[1]):
                 return jsonify(success=False, message=f"{room_id} 방 브릿지 연결이 끊겼습니다."), 409
 
             # A stop performed directly in Jumping Manager is mirrored by the

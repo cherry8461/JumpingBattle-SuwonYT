@@ -2,6 +2,7 @@
 .env
 remote_bridge/*
 !remote_bridge/suwonyt-ui-bridge-v2.ps1
+!remote_bridge/suwonyt-direct-ui-bridge.ps1
 !remote_bridge/run-suwonyt-ui-bridge.cmd
 .env.*
 !.env.example
