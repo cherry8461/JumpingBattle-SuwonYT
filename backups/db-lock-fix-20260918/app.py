@@ -29,7 +29,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from oauth2client.service_account import ServiceAccountCredentials
 from gspread_formatting import format_cell_ranges, Color, set_column_widths
-from monitor_core.database import get_db_connection, is_sqlite_busy_error, write_transaction
+from monitor_core.database import get_db_connection
 from monitor_core.settings import (
     DATA_DIR,
     DB_FILE,
@@ -970,7 +970,7 @@ def save_supply_history():
     if not isinstance(data, list):
         return jsonify({'status': 'error', 'message': '리스트 형식이 아님'}), 400
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute('DELETE FROM supply_history WHERE target_date = ?', (target_date,))
     for entry in data:
@@ -995,7 +995,7 @@ def save_supply_history():
 @web.route('/api/supply_history/<int:sid>', methods=['PUT'])
 def update_supply_item(sid):
     data = request.json
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     try:
         # 필드 정리 (JS에서 보낸 키값과 매칭)
@@ -1046,7 +1046,7 @@ def update_supply_item(sid):
 # 2. 개별 항목 삭제
 @web.route('/api/supply_history/<int:sid>', methods=['DELETE'])
 def delete_supply_item(sid):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     try:
         cur.execute('DELETE FROM supply_history WHERE id=?', (sid,))
@@ -1062,7 +1062,7 @@ def delete_supply_item(sid):
 def create_supply_item():
     data = request.json
     target_date = data.get('target_date') or _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     try:
         cur.execute('''
@@ -1081,7 +1081,7 @@ def create_supply_item():
 @web.route('/api/supply_history/list', methods=['GET'])
 def get_supply_history():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute('SELECT * FROM supply_history WHERE target_date = ? ORDER BY id ASC', (target_date,))
@@ -1429,7 +1429,7 @@ def normalize_time(t: str):
 # DB 함수
 # ========================================================
 def save_to_db(data):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute("""
         INSERT OR IGNORE INTO game_records
@@ -1462,107 +1462,8 @@ def save_to_db(data):
 
     
 
-_RANK_PENDING_FILE = DATA_DIR / "pending_rankings.jsonl"
-_RANK_PENDING_LOCK = threading.RLock()
-_RANK_RETRY_TIMER = None
-
-
-def _insert_ranking_row(data, emit_refresh=True):
-    with write_transaction("ranking save", timeout=0.35, attempts=6) as conn:
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO rankings
-               (log_id, play_date, play_time, team_name, score, play_count, size, level)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                data["log_id"], data["play_date"], data["play_time"],
-                data["team_name"], data["score"], data["play_count"],
-                data["size"], data["level"],
-            ),
-        )
-        inserted = cur.rowcount > 0
-    if inserted and emit_refresh:
-        socketio.emit("rank_refresh")
-    return inserted
-
-
-def _queue_pending_ranking(data):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with _RANK_PENDING_LOCK:
-        with open(_RANK_PENDING_FILE, "a", encoding="utf-8") as pending_file:
-            pending_file.write(json.dumps(data, ensure_ascii=False) + "\n")
-            pending_file.flush()
-            os.fsync(pending_file.fileno())
-
-
-def _flush_pending_rankings():
-    global _RANK_RETRY_TIMER
-    with _RANK_PENDING_LOCK:
-        _RANK_RETRY_TIMER = None
-        if not _RANK_PENDING_FILE.exists():
-            return
-        rows = []
-        for line in _RANK_PENDING_FILE.read_text(encoding="utf-8").splitlines():
-            try:
-                rows.append(json.loads(line))
-            except (TypeError, ValueError):
-                continue
-        remaining = []
-        restored = 0
-        for index, row in enumerate(rows):
-            try:
-                restored += int(_insert_ranking_row(row, emit_refresh=False))
-            except sqlite3.OperationalError as error:
-                if not is_sqlite_busy_error(error):
-                    web.logger.exception("Deferred ranking recovery failed")
-                remaining.extend(rows[index:])
-                break
-        temporary = _RANK_PENDING_FILE.with_suffix(".tmp")
-        if remaining:
-            temporary.write_text(
-                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in remaining),
-                encoding="utf-8",
-            )
-            os.replace(temporary, _RANK_PENDING_FILE)
-            _schedule_rank_retry()
-        else:
-            _RANK_PENDING_FILE.unlink(missing_ok=True)
-        if restored:
-            print(f"RANK RECOVERED | {restored} pending record(s)")
-            socketio.emit("rank_refresh")
-
-
-def _schedule_rank_retry():
-    global _RANK_RETRY_TIMER
-    with _RANK_PENDING_LOCK:
-        if _RANK_RETRY_TIMER is not None:
-            return
-        _RANK_RETRY_TIMER = threading.Timer(0.5, _flush_pending_rankings)
-        _RANK_RETRY_TIMER.daemon = True
-        _RANK_RETRY_TIMER.start()
-
-
-def save_to_db(data):
-    """Persist a ranking immediately, with a durable retry if SQLite is busy."""
-    try:
-        _flush_pending_rankings()
-        inserted = _insert_ranking_row(data)
-        if inserted:
-            print(f"RANK SAVE | {data['size']} | {data['team_name']} | {data['score']} points")
-        else:
-            log_stats["duplicates"] += 1
-            print(f"RANK DUPLICATE | {data['size']} | {data['team_name']} | score={data['score']}")
-        return True
-    except sqlite3.OperationalError as error:
-        if not is_sqlite_busy_error(error):
-            raise
-        _queue_pending_ranking(data)
-        _schedule_rank_retry()
-        print(f"RANK QUEUED | database busy | log_id={data.get('log_id')}")
-        return True
-
-
 def load_rows():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("""
@@ -1578,7 +1479,7 @@ def load_rows_by_date(date_str):
     """
     date_str: '2025-12-23'
     """
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -1867,7 +1768,7 @@ def admin_update(id):
     else:
         score = int(score)
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute("""
         UPDATE game_records
@@ -1889,7 +1790,7 @@ def admin_update(id):
 
 @web.route("/admin/delete/<int:id>")
 def admin_delete(id):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute("DELETE FROM game_records WHERE id=?", (id,))
 
@@ -1908,7 +1809,7 @@ def admin_delete(id):
 def team_search():
     keyword = request.args.get("keyword", "").replace(" ", "").lower()
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -1982,7 +1883,7 @@ def get_teams():
     # 1. 프론트엔드에서 보낸 날짜 파라미터를 읽습니다. (없으면 오늘 날짜)
     target_date = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
@@ -2074,7 +1975,7 @@ def settlement_page():
 @web.route('/api/settlement/overview', methods=['GET'])
 def get_settlement_overview():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -2213,7 +2114,7 @@ def get_settlement_overview():
 @web.route('/api/settlement/cash_expense', methods=['GET'])
 def get_settlement_cash_expense():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
@@ -2232,7 +2133,7 @@ def save_settlement_cash_expense():
     data = request.json or {}
     cash_expense = max(int(data.get('cashExpense') or 0), 0)
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute(
         '''INSERT INTO settlement_daily_meta (target_date, cash_expense, updated_at)
@@ -2250,7 +2151,7 @@ def save_settlement_cash_expense():
 @web.route('/api/settlement/cash_receipt', methods=['GET'])
 def get_settlement_cash_receipt():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
@@ -2269,7 +2170,7 @@ def save_settlement_cash_receipt():
     data = request.json or {}
     cash_receipt = max(int(data.get('cashReceipt') or 0), 0)
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute(
         '''INSERT INTO settlement_daily_meta (target_date, cash_receipt, updated_at)
@@ -2287,7 +2188,7 @@ def save_settlement_cash_receipt():
 @web.route('/api/settlement/no_show', methods=['GET'])
 def get_settlement_no_show_count():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
@@ -2306,7 +2207,7 @@ def save_settlement_no_show_count():
     data = request.json or {}
     no_show_count = max(int(data.get('noShowCount') or 0), 0)
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute(
         '''INSERT INTO settlement_daily_meta (target_date, no_show_count, updated_at)
@@ -2341,7 +2242,7 @@ def update_settlement_team_payment(bid):
     transfer_amount = max(int(data.get('transfer_amount') or 0), 0)
     paid = 1 if bool(data.get('paid')) else 0
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute('SELECT paid, payment_data FROM bookings WHERE id=?', (bid,))
@@ -2416,7 +2317,7 @@ def create_settlement_team():
                                 max(int(data.get('transfer_amount') or 0), 0)
     }
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute(
         'INSERT INTO bookings (booking_date, time_key, room, name, phone, team, people, paid, payment_data, created_at) VALUES (?,?,?,?,?,?,?,?,?,datetime("now","localtime"))',
@@ -2430,7 +2331,7 @@ def create_settlement_team():
 
 @web.route('/api/settlement/team/<int:bid>', methods=['DELETE'])
 def delete_settlement_team(bid):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     try:
         # 데이터가 있는지 확인
@@ -2453,7 +2354,7 @@ def delete_settlement_team(bid):
 @web.route('/api/day_type_override', methods=['GET'])
 def get_day_type_override():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute('SELECT day_type FROM day_type_overrides WHERE target_date=?', (target_date,))
@@ -2475,7 +2376,7 @@ def put_day_type_override():
     if day_type not in {'weekday', 'weekend'}:
         return jsonify({'status': 'error', 'message': 'Invalid day_type'}), 400
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute(
         '''INSERT INTO day_type_overrides (target_date, day_type, updated_at)
@@ -2499,7 +2400,7 @@ def delete_day_type_override():
     if not target_date:
         return jsonify({'status': 'error', 'message': 'Invalid target_date'}), 400
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute('DELETE FROM day_type_overrides WHERE target_date=?', (target_date,))
     conn.commit()
@@ -2524,7 +2425,7 @@ def add_booking():
     order_no = data.get('order_no')
 
     # 🎯 [교정 1]: 타임아웃 30초 장착으로 줄 서서 대기하게 만듭니다.
-    conn = get_db_connection(timeout=5)
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -2583,7 +2484,7 @@ def add_booking():
 @web.route('/api/booking/<int:bid>', methods=['PUT'])
 def update_booking(bid):
     data = request.json or {}
-    conn = get_db_connection(timeout=5)
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute('SELECT booking_date FROM bookings WHERE id=?', (bid,))
@@ -2627,7 +2528,7 @@ def update_booking(bid):
 
 @web.route('/api/booking/<int:bid>', methods=['DELETE'])
 def delete_booking(bid):
-    conn = get_db_connection(timeout=5)
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     cur = conn.cursor()
     try:
         # 🎯 [교정 2]: with conn 보호막을 씌워 데이터 삭제 즉시 자동으로 Commit 하고 잠금을 풀게 합니다.
@@ -2656,7 +2557,7 @@ def delete_booking(bid):
 @web.route('/api/booking/list', methods=['GET'])
 def get_booking_list():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
@@ -2707,7 +2608,7 @@ def _build_booking_cell_text(row):
 @web.route('/api/booking/export-excel', methods=['GET'])
 def export_booking_excel():
     target_date = _get_request_date(default_today=True)
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM bookings WHERE booking_date=? ORDER BY time_key, room, COALESCE(order_no, 0), id", (target_date,))
@@ -2827,7 +2728,7 @@ def export_booking_excel():
 
 @web.route('/api/queue/list', methods=['GET'])
 def get_queue_list():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     ensure_queue_items_order_column(conn)
     cur = conn.cursor()
@@ -2844,7 +2745,7 @@ def add_queue_item():
     if room not in {'C1', 'C2', 'B1', 'B2'}:
         return jsonify({"status": "error", "message": "Invalid room"}), 400
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     ensure_queue_items_order_column(conn)
     cur = conn.cursor()
     cur.execute('SELECT COALESCE(MAX(order_no), 0) FROM queue_items WHERE room=?', (room,))
@@ -3057,7 +2958,7 @@ def recover_naver_reservation_to_onsite_payment(booking_id):
 def get_today_init_bookings():
     today_str = datetime.now().strftime('%Y-%m-%d') # 오늘 날짜 (2026-05-18)
     
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
     # 오늘 이용 조건 + 상태가 INIT인 건만 조회
@@ -3111,7 +3012,7 @@ def confirm_naver_booking():
     if not booking_id:
         return jsonify({'success': False, 'message': '예약번호 누락'}), 400
         
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     
     try:
@@ -3221,6 +3122,8 @@ def check_cancellations_on_startup():
             mail.logout()
             return
 
+        conn = sqlite3.connect(DB_FILE)
+        cur = conn.cursor()
         cancel_count = 0
 
         # 3. 검색된 메일들을 하나씩 파싱
@@ -3255,21 +3158,20 @@ def check_cancellations_on_startup():
 
                 if booking_id:
                     # A. 워크인 대기 캐시 테이블에서 삭제
-                    with get_db_connection() as conn:
-                        cur = conn.cursor()
-                        cur.execute("DELETE FROM naver_mail_cache WHERE booking_id = ?", (booking_id,))
+                    cur.execute("DELETE FROM naver_mail_cache WHERE booking_id = ?", (booking_id,))
                     
                     # B. 정식 타임테이블(bookings)의 team 또는 name 컬럼에 해당 예약번호(이름)가 있으면 삭제
                     # (앞서 team과 name에 "[네이버] 손*리" 형태로 예약번호나 캐싱 정보를 연동했으므로 매칭하여 지웁니다)
-                        cur.execute("DELETE FROM bookings WHERE name LIKE ? OR team LIKE ?", (f"%{booking_id}%", f"%{booking_id}%"))
-                        cur.close()
-                    conn.close()
+                    cur.execute("DELETE FROM bookings WHERE name LIKE ? OR team LIKE ?", (f"%{booking_id}%", f"%{booking_id}%"))
                     
                     # C. 메일을 '읽음' 처리하여 다음 서버 구동 시 중복 스캔 방지
                     mail.store(num, '+FLAGS', '\\Seen')
                     cancel_count += 1
                     print(f"💥 [서버 구동 취소 처리] 예약번호: {booking_id} 데이터 전격 삭제 완료")
 
+        conn.commit()
+        cur.close()
+        conn.close()
         mail.logout()
         print(f"🎉 [스캔 종료] 총 {cancel_count}건의 취소 데이터가 완벽히 정리되었습니다.")
 
@@ -3307,7 +3209,7 @@ def record_naver_email_hint(raw_email_content, parsed_result=None):
     hint_key = booking_id or hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest()
     if not hint_key:
         return None
-    with get_db_connection(timeout=5) as conn:
+    with sqlite3.connect(DB_FILE, timeout=30) as conn:
         conn.execute(
             '''INSERT INTO naver_email_hints (hint_key, booking_id, use_date, use_time_key, room_name)
                VALUES (?, ?, ?, ?, ?)
@@ -3328,7 +3230,7 @@ def parse_and_save_naver_email(raw_email_content):
         # parser below remains as a fallback for older stored messages.
         parsed_fields = _parse_suwonyt_naver_confirmation(raw_email_content)
         if parsed_fields:
-            conn = get_db_connection(timeout=5)
+            conn = sqlite3.connect(DB_FILE, timeout=30)
             try:
                 conn.execute(
                     '''INSERT INTO naver_mail_cache
@@ -3428,7 +3330,7 @@ def parse_and_save_naver_email(raw_email_content):
             return False
 
         # 6. SQLite DB 테이블에 'INIT' 상태로 데이터 저장
-        conn = get_db_connection(timeout=5)
+        conn = sqlite3.connect(DB_FILE, timeout=30)
         cur = conn.cursor()
         
         # 💡 정제된 final_name 변수가 매핑되도록 쿼리 인자 수정
@@ -3796,7 +3698,7 @@ def _sync_missed_emails_legacy():
                             if not booking_id:
                                 continue
 
-                            conn = get_db_connection(timeout=5)
+                            conn = sqlite3.connect(DB_FILE, timeout=30)
                             cur = conn.cursor()
 
                             try:
@@ -3977,7 +3879,7 @@ def monitor_gmail_reservation_mail():
 @web.route('/api/queue/<int:qid>', methods=['PUT'])
 def update_queue_item(qid):
     data = request.json or {}
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     ensure_queue_items_order_column(conn)
     cur = conn.cursor()
@@ -4022,7 +3924,7 @@ def update_queue_item(qid):
 
 @web.route('/api/queue/<int:qid>', methods=['DELETE'])
 def delete_queue_item(qid):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute('DELETE FROM queue_items WHERE id=?', (qid,))
     conn.commit()
@@ -4038,7 +3940,7 @@ def get_pad_status():
     현재 게임 상태, 팀 정보, 시간 등을 반환합니다.
     """
     manager_states = {}
-    conn = get_db_connection(timeout=3)
+    conn = sqlite3.connect(DB_FILE, timeout=5)
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
@@ -4125,7 +4027,7 @@ def add_walkin():
     room_fast = 1 if data.get('room_fast') else 0
     phone = str(data.get('phone', '')).strip()
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     if request_id:
         try:
@@ -4166,7 +4068,7 @@ def add_walkin():
 
 @web.route('/api/walkin/list')
 def get_walkin_list():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("PRAGMA table_info(walkins)")
     columns = {row[1] for row in c.fetchall()}
@@ -4209,7 +4111,7 @@ def complete_walkin():
         data = request.json
         walkin_id = data.get('id')
         
-        conn = get_db_connection()
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         # 해당 ID의 상태를 waiting -> entered로 변경
         c.execute("UPDATE walkins SET status='entered' WHERE id=?", (walkin_id,))
@@ -4225,7 +4127,7 @@ def complete_walkin():
 def get_walkin_history():
     target_date = request.args.get('date') # JS에서 보낸 날짜값
     
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
     # 컬럼 체크 (기존 로직 활용)
@@ -4291,10 +4193,6 @@ def get_walkin_history():
 # ========================================================
 if __name__ == "__main__":
     init_db()
-    # Recover any ranking row that was durably queued because another process
-    # owned SQLite at the exact moment the previous process stopped.
-    if _RANK_PENDING_FILE.exists():
-        _schedule_rank_retry()
     init_google_sheets()
 
     dev_reload = os.getenv("DEV_RELOAD", "0") == "1"

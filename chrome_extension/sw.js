@@ -16,7 +16,7 @@ const STOCK_STATE_KEY = "naver-stock-closed-by-extension";
 const NAVER_WRITE_AUTH_KEY = "naver-write-auth";
 const EXPECTED_STOCK_WRITE_KEY = "expected-extension-stock-writes";
 const KST_TIME_ZONE = "Asia/Seoul";
-const EXTENSION_BUILD = "suwonyt-stock-release-today-20260910-01";
+const EXTENSION_BUILD = "suwonyt-party-details-20260917-01";
 let roomItemIdsCache = null;
 let roomItemIdsCacheAt = 0;
 let stockEventWatcherRunning = false;
@@ -156,12 +156,14 @@ function mapBooking(booking) {
     // corrupted by a Windows code-page save.
     teamName: customAnswer(booking, new RegExp("\\ud300\\s*\\uba85", "i")),
     difficulty: customAnswer(booking, new RegExp("\\ub09c\\uc774\\ub3c4", "i")),
+    partyConcept: customAnswer(booking, new RegExp("\\ud30c\\ud2f0\\ub8f8\\s*\\ucee8\\uc149", "i")),
+    partyPeople: customAnswer(booking, new RegExp("\\uac8c\\uc784\\s*\\uc774\\uc6a9\\s*\\uc778\\uc6d0", "i")),
     totalCount: people
   };
 }
 
 function fingerprint(item) {
-  return JSON.stringify([item.status, item.when, item.product, item.name, item.phone, item.teamName, item.difficulty, item.totalCount]);
+  return JSON.stringify([item.status, item.when, item.product, item.name, item.phone, item.teamName, item.difficulty, item.partyConcept, item.partyPeople, item.totalCount]);
 }
 
 async function sendChangedBookings(items, force = false) {

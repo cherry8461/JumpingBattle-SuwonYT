@@ -352,9 +352,9 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     INSERT INTO naver_reservations (
                         booking_id, booking_status, use_date, use_time_key, room_name,
                         product_name, customer_name, team_name, difficulty, phone,
-                        people_count, booking_fingerprint,
+                        people_count, party_concept, party_people, booking_fingerprint,
                         first_seen_at, updated_at, cancelled_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(booking_id) DO UPDATE SET
                         booking_status=excluded.booking_status,
                         use_date=excluded.use_date,
@@ -366,6 +366,8 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                         difficulty=excluded.difficulty,
                         phone=excluded.phone,
                         people_count=excluded.people_count,
+                        party_concept=excluded.party_concept,
+                        party_people=excluded.party_people,
                         booking_fingerprint=excluded.booking_fingerprint,
                         updated_at=excluded.updated_at,
                         cancelled_at=excluded.cancelled_at
@@ -412,10 +414,12 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                     if cursor.fetchone() is not None:
                         cursor.execute("DELETE FROM naver_mail_cache WHERE booking_id=?", (normalized["booking_id"],))
                         accepted += 1
+                        connection.commit()
                         continue
                     restore_reversed_cancellation(cursor, normalized["booking_id"], normalized["use_date"])
                     if keep_card_for_onsite_payment:
                         accepted += 1
+                        connection.commit()
                         continue
                     _, created = ensure_naver_dashboard_card(cursor, normalized)
                     cards_created += int(created)
@@ -445,6 +449,10 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                         ),
                     )
                 accepted += 1
+                # Do not hold one SQLite writer lock for the whole browser
+                # batch. Each reservation is independently idempotent, so
+                # commit it immediately and let ranking/bridge writes proceed.
+                connection.commit()
 
         socketio.emit(
             "naver_reservations_synced",
@@ -626,10 +634,24 @@ def create_naver_reservations_blueprint(socketio) -> Blueprint:
                            VALUES (?, ?, ?, '', '', '네이버 수동 마감', '', '', ?, 0, 0, ?)""",
                         (use_date, timeline_time, room, order_no, payment_data),
                     )
+                    booking_row_id = int(cursor.lastrowid)
+                    # The Chrome extension can report the same staff action
+                    # twice in quick succession.  The SELECT above is useful
+                    # for the usual case, but two concurrent requests can both
+                    # pass it before either transaction commits.  Let SQLite's
+                    # primary key arbitrate that race instead of raising a 500.
                     cursor.execute(
-                        "INSERT INTO naver_manual_stock_blocks (room, use_date, use_time_key, booking_row_id) VALUES (?, ?, ?, ?)",
-                        (room, use_date, use_time_key, int(cursor.lastrowid)),
+                        """INSERT OR IGNORE INTO naver_manual_stock_blocks
+                           (room, use_date, use_time_key, booking_row_id)
+                           VALUES (?, ?, ?, ?)""",
+                        (room, use_date, use_time_key, booking_row_id),
                     )
+                    if cursor.rowcount == 0:
+                        # Another request already created the mapping while
+                        # this request was waiting.  Remove only our temporary
+                        # grey card so no orphan/duplicate remains.
+                        cursor.execute("DELETE FROM bookings WHERE id=?", (booking_row_id,))
+                        continue
                     applied += 1
                 else:
                     linked = cursor.execute(
@@ -761,6 +783,8 @@ def normalize_item(item: object) -> dict | None:
     team_name = clean_text(item.get("teamName"), 120)
     difficulty = normalize_difficulty(item.get("difficulty"))
     phone = normalize_phone(item.get("phone"))
+    party_concept = clean_text(item.get("partyConcept"), 120)
+    party_people = clean_text(item.get("partyPeople"), 120)
     status = normalize_status(item.get("status"))
     # Naver's booking count defaults to 1 even when the group size has not
     # been decided.  Do not copy that placeholder into the operation board.
@@ -775,6 +799,8 @@ def normalize_item(item: object) -> dict | None:
             "team": team_name,
             "difficulty": difficulty,
             "people": people_count,
+            "party_concept": party_concept,
+            "party_people": party_people,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -790,6 +816,8 @@ def normalize_item(item: object) -> dict | None:
         "difficulty": difficulty,
         "phone": phone,
         "people_count": people_count,
+        "party_concept": party_concept,
+        "party_people": party_people,
         "is_cancelled": is_cancelled,
         "is_actionable": status in {"CONFIRMED", "COMPLETED"},
         "cancelled_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S") if is_cancelled else None,
@@ -805,6 +833,8 @@ def normalize_item(item: object) -> dict | None:
             difficulty,
             phone,
             people_count,
+            party_concept,
+            party_people,
             fingerprint,
         ),
     }

@@ -7,46 +7,42 @@
     <title>점핑배틀 수원영통점 정산 보드</title>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css', v='game-running-border-20260909-01') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css', v='party-group-20260917-02') }}" />
 </head>
 <body>
-    <div class="top-bar">
-        <div class="header-left">
-            <img src="{{ url_for('static', filename='image/logo.svg') }}" alt="점핑배틀 로고" class="header-logo">
-            <h2 class="header-title">수원영통점</h2>
-            <span id="currentDate" class="today-date"></span>
-            <span id="holidaySyncNotice">(공휴일 자동연동)</span>
-            <span class="day-type-wrap">
-                <span id="dayTypeDisplay" class="day-type-label">평일</span>
-                <span id="dayTypeForcedNotice" style="display:none;">(강제변경됨)</span>
-            </span>
-            <button id="forceDayTypeBtn" onclick="toggleForcedDayType()">주말</button>
-            <span>성인: <input type="number" id="adultPrice" value="6000"></span>
-            <span>학생: <input type="number" id="childPrice" value="4000"></span>       
-        </div>
-        <!-- <div class="header-right">
-            <button onclick="saveAllBookings()" class="btn-save-bookings">💾 엑셀저장</button>
-            <button onclick="window.location.href='/settlement'" class="btn-save-bookings" style="margin-left: 6px;">🧾 정산페이지</button>
-        </div>
-    -->
-        <div class="header-right">
-            <div class="top-controls">
-                <button id="view-all-btn" onclick="toggleViewAll()">전체보기</button>
-            </div>
-            <div class="date-filter-container">
-                <label for="dashboard-date">조회 날짜</label>
-                <div class="date-input-group">
-                    <input type="date" id="dashboard-date" onchange="loadBookings()">
-                    <button type="button" class="btn-today-shortcut" onclick="setToToday()">오늘</button>
-                </div>
-            </div>
-        </div>
-    </div>
     <div class="main-wrapper">
         <!-- 정산 (col1-2 / row1) -->
         <div class="settlement-panel">
             <div class="dashboard-settlement-strip" id="settlementStrip">
-                <div class="settle-box-title">정산</div>
+                <div class="settlement-heading-row">
+                    <div class="settlement-brand-block">
+                        <div class="settlement-brand-title">
+                            <img src="{{ url_for('static', filename='image/logo.svg') }}" alt="점핑배틀 로고" class="header-logo">
+                            <h2 class="header-title">수원영통점</h2>
+                        </div>
+                        <div class="settlement-brand-meta">
+                            <span class="daily-stat"><span class="daily-stat-label">팀</span><b id="dashboardTodayTeamCount">0</b><span>팀</span></span>
+                            <span class="daily-stat-divider"></span>
+                            <span class="daily-stat"><span class="daily-stat-label">전체 인원</span><b id="dashboardTodayPeopleCount">0</b><span>명</span></span>
+                            <span id="dayTypeDisplay" class="day-type-label" aria-hidden="true">&#54217;&#51068;</span>
+                            <span id="holidaySyncNotice" aria-hidden="true"></span>
+                            <span id="dayTypeForcedNotice" style="display:none;" aria-hidden="true"></span>
+                        </div>
+                        <div class="settlement-brand-prices">
+                            <span class="price-setting">&#49457;&#51064; <input type="number" id="adultPrice" value="6000"></span>
+                            <span class="price-setting">&#54617;&#49373; <input type="number" id="childPrice" value="4000"></span>
+                            <span class="day-type-selector" role="group" aria-label="day type">
+                                <button type="button" id="weekdayTypeBtn" class="day-type-choice" onclick="chooseDayType('weekday')">&#54217;&#51068;</button>
+                                <button type="button" id="weekendTypeBtn" class="day-type-choice" onclick="chooseDayType('weekend')">&#51452;&#47568;</button>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="settle-box-title">정산</div>
+                    <div class="settlement-center-clock">
+                        <span id="currentDate" class="today-date"></span>
+                        <span id="minuteBoundaryTimer" class="minute-boundary-timer">현재시간 --:--:--</span>
+                    </div>
+                </div>
                 <div class="settle-box-row settle-row-topline">
                     <div class="settle-box-row settle-row-total">
                         <span>전체</span>
@@ -55,11 +51,11 @@
                     <div class="settle-box-row settle-row-pass-coupon">
                         <div class="settle-pass-coupon-col">
                             <span class="settle-inline-title">다회권</span>
-                            <span class="settle-inline-value">성인<b id="dashboardSettlePassAdult">0</b> / 학생<b id="dashboardSettlePassStudent">0</b></span>
+                            <span class="settle-inline-value">성인<b id="dashboardSettlePassAdult">0</b>/학생<b id="dashboardSettlePassStudent">0</b></span>
                         </div>
                         <div class="settle-pass-coupon-col">
                             <span class="settle-inline-title">쿠폰</span>
-                            <span class="settle-inline-value">성인<b id="dashboardSettleCouponAdult">0</b> / 학생<b id="dashboardSettleCouponStudent">0</b></span>
+                            <span class="settle-inline-value">성인<b id="dashboardSettleCouponAdult">0</b>/학생<b id="dashboardSettleCouponStudent">0</b></span>
                         </div>
                     </div>
                 </div>                
@@ -86,13 +82,21 @@
                         <span class="settle-col-title">당일취소&노쇼</span>
                         <span class="settle-col-value"><b id="dashboardSettleNoShow">0</b>원</span>
                         <div class="settle-noshow-actions">
-                            <input type="number" id="dashboardNoShowInput" class="settle-noshow-input" min="0" max="99" step="1" value="0" oninput="addDashboardNoShowAmount()">
+                            <button type="button" id="dashboardNoShowMinus" class="settle-noshow-step" aria-label="당일취소 횟수 감소" onclick="changeDashboardNoShowCount(-1)">−</button>
+                            <input type="number" id="dashboardNoShowInput" class="settle-noshow-input" min="0" max="99" step="1" value="0" readonly aria-label="당일취소 횟수">
+                            <button type="button" id="dashboardNoShowPlus" class="settle-noshow-step" aria-label="당일취소 횟수 증가" onclick="changeDashboardNoShowCount(1)">+</button>
+                        </div>
+                    </div>
+                    <div class="settle-col settle-row-cash-receipt">
+                        <span class="settle-col-title">현금영수증</span>
+                        <div class="settle-noshow-actions settle-cash-receipt-actions">
+                            <span id="dashboardCashReceiptInput" class="settle-cash-receipt-total">0원</span>
                         </div>
                     </div>
                     <div class="settle-col settle-row-cash-expense">
                         <span class="settle-col-title">현금지출</span>
                         <div class="settle-noshow-actions settle-cash-expense-actions">
-                            <input type="text" id="dashboardCashExpenseInput" class="settle-noshow-input settle-cash-expense-input" inputmode="numeric" placeholder="금액" oninput="handleDashboardCashExpenseInput(this)">
+                            <span id="dashboardCashExpenseInput" class="settle-cash-receipt-total">0원</span>
                         </div>
                     </div>                              
                 </div>
@@ -103,7 +107,7 @@
         <div class="quickbook-panel">
             <div class="booking-bar" id="bookingBar">
                 <div class="booking-utility-row">
-                    <span id="minuteBoundaryTimer" class="minute-boundary-timer">현재시간 --:--:--</span>
+                    <span class="minute-boundary-timer quickbook-timer-placeholder" aria-hidden="true">현재시간 --:--:--</span>
                 </div>
                 <div class="booking-form-row booking-form-row-primary">
                     <div class="booking-input-group">
@@ -186,11 +190,27 @@
             <table class="timeline-table">
                 <tbody id="timelineBody"></tbody>
             </table>
+
             <div class="timeline-overlay-bottom" id="timelineOverlayBottom"></div>
         </div>
 
         <!-- 기타판매 (col6 / row1-3) -->
         <div class="beverage-container">
+            <div class="settlement-header-controls">
+                <button id="forceDayTypeBtn" onclick="toggleForcedDayType()">주말</button>
+                <div class="price-setting-stack">
+                    <span class="price-setting">성인 <input type="number" id="adultPrice" value="6000"></span>
+                    <span class="price-setting">학생 <input type="number" id="childPrice" value="4000"></span>
+                </div>
+                <button id="view-all-btn" onclick="toggleViewAll()">전체보기</button>
+                <div class="date-filter-container">
+                    <label for="dashboard-date">조회 날짜</label>
+                    <div class="date-input-group">
+                        <input type="date" id="dashboard-date" onchange="loadBookings()">
+                        <button type="button" class="btn-today-shortcut" onclick="setToToday()">오늘</button>
+                    </div>
+                </div>
+            </div>
             <div class="supply-panel-header">
                 <div class="supply-header-row">
                     <div class="supply-header-left">
@@ -217,13 +237,32 @@
                             </span>
                         </h3>
                     </div>
-                    <div class="supply-header-total">총 결제: <span id="supplyGrandTotal">0</span>원</div>
+                    <div class="supply-header-total">
+                        <span class="supply-header-total-label">합계</span>
+                        <span class="supply-header-total-amount"><span id="supplyGrandTotal">0</span><span class="supply-header-total-unit">원</span></span>
+                    </div>
                 </div>
-                <div class="supply-total-breakdown"><span class="supply-total-card">카드: <span id="supplyTotalCard">0</span>원</span> / <span class="supply-total-cash">현금: <span id="supplyTotalCash">0</span>원</span> / <span class="supply-total-transfer">계좌: <span id="supplyTotalTransfer">0</span>원</span></div>
-                <div class="supply-total-extra">
-                    <span class="supply-total-pass">다회권: <span id="supplyTotalPass">0</span>원</span>
-                    <span class="supply-total-sep"> / </span>
-                    <span class="supply-total-party">파티룸: <span id="supplyTotalParty">0</span>원</span>
+                <div class="supply-summary-strip" aria-label="기타 판매 결제 합계">
+                    <div class="supply-summary-cell supply-summary-card">
+                        <span class="supply-summary-label">카드</span>
+                        <strong><span id="supplyTotalCard">0</span><span class="supply-summary-unit">원</span></strong>
+                    </div>
+                    <div class="supply-summary-cell supply-summary-cash">
+                        <span class="supply-summary-label">현금</span>
+                        <strong><span id="supplyTotalCash">0</span><span class="supply-summary-unit">원</span></strong>
+                    </div>
+                    <div class="supply-summary-cell supply-summary-transfer">
+                        <span class="supply-summary-label">계좌</span>
+                        <strong><span id="supplyTotalTransfer">0</span><span class="supply-summary-unit">원</span></strong>
+                    </div>
+                    <div class="supply-summary-cell supply-summary-pass">
+                        <span class="supply-summary-label">다회권</span>
+                        <strong><span id="supplyTotalPass">0</span><span class="supply-summary-unit">원</span></strong>
+                    </div>
+                    <div class="supply-summary-cell supply-summary-party">
+                        <span class="supply-summary-label">파티룸</span>
+                        <strong><span id="supplyTotalParty">0</span><span class="supply-summary-unit">원</span></strong>
+                    </div>
                 </div>
             </div>
 
@@ -258,6 +297,21 @@
                         <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcCard" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
                         <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcCash" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
                         <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcTransfer" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
+                    </tr>
+                    <tr class="row-theme-violet supply-adjustment-table-row">
+                        <td class="special-pay-item">
+                            <div class="etc-item-wrap supply-expense-wrap">
+                                <span>현금지출</span>
+                                <input type="text" id="spCashExpenseText" class="etc-item-text" maxlength="30" placeholder="지출 내용">
+                            </div>
+                        </td>
+                        <td class="supply-adjustment-amount-cell">
+                            <input type="text" id="spCashExpense" class="currency-input" inputmode="numeric" placeholder="금액" oninput="formatCurrencyInput(this)">
+                        </td>
+                        <td class="supply-cash-receipt-label">현금영수증</td>
+                        <td class="supply-adjustment-amount-cell">
+                            <input type="text" id="spCashReceipt" class="currency-input" inputmode="numeric" placeholder="금액" oninput="formatCurrencyInput(this)">
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -462,11 +516,15 @@
                         </div>
                         <div class="payment-method-item">
                             <label>현금</label>
-                            <input type="number" id="cashInput" placeholder="0" min="0" onchange="calculatePayment()">
+                            <input type="number" id="cashInput" placeholder="0" min="0" oninput="enforceGameCashReceiptLimit(); calculatePayment()">
                         </div>
                         <div class="payment-method-item">
                             <label>계좌</label>
-                            <input type="number" id="transferInput" placeholder="0" min="0" onchange="calculatePayment()">
+                            <input type="number" id="transferInput" placeholder="0" min="0" oninput="enforceGameCashReceiptLimit(); calculatePayment()">
+                        </div>
+                        <div class="payment-method-item payment-method-cash-receipt">
+                            <label>현금영수증</label>
+                            <input type="number" id="cashReceiptInput" placeholder="0" min="0" oninput="enforceGameCashReceiptLimit(); calculatePayment()">
                         </div>
                     </div>
                 </div>
@@ -511,7 +569,7 @@
             <div class="modal-buttons">
                 <button class="delete-payment-btn" onclick="deleteCurrentPaymentCard()">삭제</button>
                 <div class="modal-buttons-right">
-                    <button class="save-payment-btn" onclick="savePaymentInfo()">확인</button>
+                    <button type="button" id="paymentSaveButton" class="save-payment-btn" onclick="savePaymentInfo()">확인</button>
                 </div>
             </div>
         </div>
@@ -520,6 +578,6 @@
 <script src="{{ url_for('static', filename='js/settle_core.js') }} " ></script>
 <script src="{{ url_for('static', filename='js/settlement.js') }}"></script>
 <script src="{{ url_for('static', filename='js/google_sheets.js') }}" ></script>      
-<script src="{{ url_for('static', filename='js/dashboard.js', v='naver-mail-placeholder-20260915-01') }}" ></script>
+<script src="{{ url_for('static', filename='js/dashboard.js', v='party-group-20260917-02') }}" ></script>
 </body>
 </html>

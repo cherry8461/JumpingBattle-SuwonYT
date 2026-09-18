@@ -1184,11 +1184,37 @@
             font-weight: 600;
         }
         .supply-header-total {
-            flex: 0 0 auto;
-            font-size: 16px;
-            font-weight: 900;
-            color: #ef4444;
+            flex: 0 0 137px;
+            width: 137px;
+            min-height: 31px;
+            padding: 5px 9px;
+            border: 1px solid #dbe4ef;
+            border-radius: 8px;
+            background: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            box-sizing: border-box;
             white-space: nowrap;
+        }
+        .supply-header-total-label {
+            font-size: 10px;
+            line-height: 1;
+            font-weight: 800;
+            color: #475569;
+        }
+        .supply-header-total-amount {
+            font-size: 16px;
+            line-height: 1;
+            font-weight: 900;
+            color: #172033;
+        }
+        .supply-header-total-unit {
+            margin-left: 3px;
+            font-size: 10px;
+            font-weight: 800;
+            color: #475569;
         }
         .supply-total-breakdown {
             margin-top: 6px;
@@ -1223,6 +1249,72 @@
             font-size: 13px;
             font-weight: 900;
         }
+        .supply-summary-strip {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 4px;
+            margin-top: 7px;
+        }
+        .supply-summary-cell {
+            min-width: 0;
+            height: 30px;
+            padding: 0 6px;
+            border: 1px solid #d5deea;
+            border-radius: 7px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 3px;
+            box-sizing: border-box;
+            color: #334155;
+            overflow: hidden;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        }
+        .supply-summary-label {
+            min-width: 0;
+            font-size: 9px;
+            line-height: 1;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        .supply-summary-cell strong {
+            flex: 0 0 auto;
+            font-size: 11px;
+            line-height: 1;
+            font-weight: 900;
+            white-space: nowrap;
+        }
+        .supply-summary-unit {
+            margin-left: 3px;
+            font-size: 9px;
+            font-weight: 800;
+            color: #334155;
+        }
+        .supply-summary-card {
+            background: #f3f7ff;
+            border-color: #cfe0fa;
+        }
+        .supply-summary-card strong { color: #172033; }
+        .supply-summary-cash {
+            background: #f2fbf5;
+            border-color: #ccebd5;
+        }
+        .supply-summary-cash strong { color: #172033; }
+        .supply-summary-transfer {
+            background: #fff8ef;
+            border-color: #f5dec0;
+        }
+        .supply-summary-transfer strong { color: #172033; }
+        .supply-summary-pass {
+            background: #faf7ff;
+            border-color: #e7d9f7;
+        }
+        .supply-summary-pass strong { color: #172033; }
+        .supply-summary-party {
+            background: #fff6f1;
+            border-color: #f4d5c3;
+        }
+        .supply-summary-party strong { color: #172033; }
         .special-pay-table, .supply-table {
             width: 100%;
             border-collapse: collapse;
@@ -2019,6 +2111,14 @@
             text-overflow: clip;
             font-size: 11px;
         }
+        .booking-card .name-meta-row .p-name-text {
+            display: inline-block;
+            max-width: 3em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            vertical-align: middle;
+        }
         .booking-card .p-payment-text {
             display: contents !important;
         }
@@ -2406,6 +2506,61 @@
         .walkin-room-item.is-naver-card button:hover {
             background: #179601 !important;
             box-shadow: 0 4px 8px rgba(253, 111, 34, 0.3);
+        }
+        .walkin-room-item.is-party-room-booking {
+            background: #faf5ff;
+            border-color: #c4b5fd;
+            border-left: 4px solid #7c3aed !important;
+            box-shadow: 0 2px 7px rgba(109, 40, 217, 0.12);
+        }
+        .walkin-room-item.is-party-room-booking:hover {
+            border-color: #8b5cf6;
+            box-shadow: 0 3px 10px rgba(109, 40, 217, 0.2);
+        }
+        .walkin-room-item.is-party-room-booking .info > span {
+            color: #6b21a8;
+        }
+        .walkin-room-item.is-party-room-booking .info {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .walkin-room-item.is-party-room-booking .party-room-info-title {
+            flex: 0 0 auto;
+            color: #6d28d9 !important;
+            font-weight: 900;
+        }
+        .walkin-room-item.is-party-room-booking .party-room-info-separator {
+            flex: 0 0 auto;
+            color: #a78bfa !important;
+            font-weight: 700;
+        }
+        .walkin-room-item.is-party-room-booking .party-room-info-value {
+            flex: 0 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #581c87 !important;
+            font-weight: 700;
+        }
+        .walkin-room-item.is-party-room-booking .action-btn,
+        .walkin-room-item.is-party-room-booking .party-room-action-btn {
+            background: #7c3aed !important;
+            border: 1px solid #6d28d9 !important;
+            box-shadow: 0 2px 5px rgba(109, 40, 217, 0.28) !important;
+        }
+        .walkin-room-item.is-party-room-booking .action-btn:hover,
+        .walkin-room-item.is-party-room-booking .party-room-action-btn:hover {
+            background: #6d28d9 !important;
+            box-shadow: 0 4px 9px rgba(109, 40, 217, 0.32) !important;
+        }
+        .walkin-room-item.is-party-room-booking .party-room-display-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: default;
+            pointer-events: none;
+            user-select: none;
         }
 
         @keyframes walkinCardBlink {
@@ -2970,11 +3125,12 @@
         .prd-btn-one:hover { background: #5a32a3; }
         .prd-btn-cancel { background: #e9ecef; color: #333; }
         .prd-btn-cancel:hover { background: #ced4da; }
-        .payment-method-grid {
-            display: flex;
-            flex-wrap: wrap;
+.payment-method-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 10px 12px;
             align-items: flex-end;
+            width: 100%;
         }
         .people-input-columns {
             display: flex;
@@ -3069,6 +3225,10 @@
             background: #fff7ef;
             border-color: #eedfce;
         }
+        .payment-method-item:nth-child(4) {
+            background: #f5f3ff;
+            border-color: #ddd6fe;
+        }
         .payment-method-item label {
             display: block;
             font-size: 12px;
@@ -3091,6 +3251,15 @@
             background: #e0e0e0;
             color: #90a4ae;
             cursor: not-allowed;
+        }
+
+        .settle-cash-receipt-total {
+            display: block;
+            width: 100%;
+            text-align: center;
+            color: #334155;
+            font-weight: 800;
+            white-space: nowrap;
         }
         .save-payment-btn {
             background-color: #28a745;
@@ -3393,6 +3562,38 @@ span:has(#childPrice) {
     font-size: 13px;
     line-height: 1.45;
 }
+
+.special-pay-table .supply-adjustment-table-row .special-pay-item {
+    padding: 3px 5px;
+}
+
+.special-pay-table .supply-adjustment-amount-cell {
+    padding: 3px 6px;
+}
+
+.special-pay-table .supply-adjustment-amount-cell .currency-input {
+    width: 100%;
+    text-align: center;
+}
+
+.special-pay-table .supply-expense-wrap {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 5px;
+}
+
+.special-pay-table .supply-expense-wrap > span,
+.special-pay-table .supply-cash-receipt-label {
+    white-space: nowrap;
+    font-weight: 700;
+    font-size: 11px;
+}
+
+.special-pay-table .supply-cash-receipt-label {
+    text-align: center;
+    padding: 3px 2px;
+}
 .game-setting-mismatch-title { font-weight: 800; margin-bottom: 8px; }
 .game-setting-mismatch-line { white-space: nowrap; }
 .game-setting-mismatch-label { font-weight: 700; }
@@ -3419,3 +3620,1223 @@ span:has(#childPrice) {
 }
 .game-card-confirm-title { font-weight: 800; margin-bottom: 7px; }
 .game-card-confirm-message { color: #475569; }
+
+/* Dashboard top layout: settlement summary, centered clock, horizontal waiting queue. */
+.main-wrapper {
+    grid-template-rows: auto auto auto minmax(0, 1fr) !important;
+}
+
+.settlement-panel {
+    grid-column: 1 / 4 !important;
+    grid-row: 1 !important;
+}
+
+.quickbook-panel {
+    display: none !important;
+}
+
+.walkin-panel {
+    grid-column: 1 / 4 !important;
+    grid-row: 2 !important;
+    height: 48px !important;
+    min-height: 48px !important;
+    max-height: 48px !important;
+    border-top: 1px solid #d1d9e0 !important;
+    border-left: 5px solid #570714 !important;
+}
+
+.room-status-container {
+    grid-row: 3 !important;
+}
+
+.timeline-container {
+    grid-row: 4 !important;
+}
+
+.beverage-container {
+    grid-row: 1 / span 4 !important;
+}
+
+.dashboard-settlement-strip {
+    position: relative;
+    padding: 5px 8px 7px !important;
+}
+
+.settlement-heading-row {
+    position: relative;
+    min-height: 42px;
+    border-bottom: 2px solid #e2e8f0;
+    margin-bottom: 8px;
+}
+
+.settlement-heading-row .settle-box-title {
+    position: absolute;
+    left: 10px;
+    top: auto;
+    bottom: 7px;
+    transform: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+}
+
+.settlement-heading-row .minute-boundary-timer {
+    position: absolute;
+    left: 50%;
+    top: 43%;
+    transform: translate(-50%, -50%);
+    margin: 0;
+    white-space: nowrap;
+}
+
+.dashboard-settlement-strip > .settle-row-topline,
+.dashboard-settlement-strip > .settle-row-payment,
+.dashboard-settlement-strip > .settle-row-deposit {
+    display: contents !important;
+}
+
+.dashboard-settlement-strip {
+    display: grid !important;
+    grid-template-columns: 1.35fr 1.35fr 1fr 1fr .95fr .9fr 1fr 1fr .9fr;
+    gap: 6px;
+    align-items: stretch;
+}
+
+.dashboard-settlement-strip .settlement-heading-row {
+    grid-column: 1 / -1;
+}
+
+.dashboard-settlement-strip .settle-row-total,
+.dashboard-settlement-strip .settle-row-pass-coupon,
+.dashboard-settlement-strip .settle-col {
+    width: auto !important;
+    min-width: 0;
+    margin: 0 !important;
+    box-sizing: border-box;
+}
+
+.dashboard-settlement-strip .settle-row-total {
+    grid-column: 1;
+    padding: 6px 10px;
+}
+
+.dashboard-settlement-strip .settle-row-pass-coupon {
+    grid-column: 6;
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+    justify-content: flex-start;
+}
+
+.dashboard-settlement-strip .settle-pass-coupon-col {
+    flex: 0 0 96px;
+    width: 96px;
+    min-width: 96px;
+    padding-left: 5px;
+    padding-right: 5px;
+    justify-content: flex-start;
+    gap: 3px;
+}
+
+.dashboard-settlement-strip .settle-inline-title {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.dashboard-settlement-strip .settle-inline-value {
+    min-width: 0;
+    white-space: nowrap;
+    font-size: 8px;
+    letter-spacing: -0.75px;
+    justify-content: flex-start;
+    gap: 0;
+}
+
+.dashboard-settlement-strip .settle-pass-coupon-col b {
+    margin: 0 1px;
+    font-size: 11px;
+}
+
+.dashboard-settlement-strip .settle-row-noshow .settle-col-title,
+.dashboard-settlement-strip .settle-row-cash-expense .settle-col-title,
+.dashboard-settlement-strip .settle-row-cash-receipt .settle-col-title {
+    white-space: nowrap;
+    font-size: 10px;
+}
+
+.dashboard-settlement-strip .settle-row-payment > .settle-col:nth-child(1) { grid-column: 2; }
+.dashboard-settlement-strip .settle-row-payment > .settle-col:nth-child(2) { grid-column: 4; }
+.dashboard-settlement-strip .settle-row-payment > .settle-col:nth-child(3) { grid-column: 3; }
+.dashboard-settlement-strip .settle-col-deposit { grid-column: 5; }
+.dashboard-settlement-strip .settle-row-noshow { grid-column: 7; }
+.dashboard-settlement-strip .settle-row-cash-receipt { grid-column: 8; }
+.dashboard-settlement-strip .settle-row-cash-expense { grid-column: 9; }
+
+.dashboard-settlement-strip .settle-row-noshow,
+.dashboard-settlement-strip .settle-row-cash-receipt,
+.dashboard-settlement-strip .settle-row-cash-expense {
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
+.settle-cash-receipt-actions,
+.settle-cash-expense-actions {
+    min-width: 0;
+}
+
+.settle-cash-receipt-input,
+.settle-cash-expense-input {
+    width: 58px !important;
+    min-width: 0 !important;
+}
+
+.dashboard-settlement-strip .settle-col,
+.dashboard-settlement-strip .settle-col-deposit {
+    min-height: 34px;
+    padding: 5px 8px;
+    justify-content: flex-start !important;
+    gap: 4px !important;
+}
+
+.dashboard-settlement-strip .settle-noshow-actions,
+.dashboard-settlement-strip .settle-cash-receipt-actions,
+.dashboard-settlement-strip .settle-cash-expense-actions {
+    margin-left: 2px !important;
+}
+
+.walkin-panel .room-card.walkin {
+    display: grid !important;
+    grid-template-columns: 145px minmax(0, 1fr) !important;
+    grid-template-rows: 1fr !important;
+    align-items: center;
+    gap: 10px;
+    padding: 2px 8px;
+    border-radius: 8px 8px 0 0;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.walkin-panel .room-card.walkin .room-card-header {
+    border: 0;
+    border-right: 2px solid #94a3b8 !important;
+    padding: 0 10px 0 4px;
+    margin: 0;
+    gap: 8px;
+    align-items: center;
+    white-space: nowrap;
+    min-height: 28px;
+    align-self: stretch;
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    display: flex !important;
+    width: 145px !important;
+    box-sizing: border-box;
+}
+
+.walkin-panel .room-card.walkin .room-name-container {
+    flex: 1 1 auto;
+    text-align: left;
+}
+
+.walkin-panel .room-name-walkin {
+    font-size: 14px;
+}
+
+.walkin-panel .room-card-walkin-body {
+    display: flex !important;
+    flex-flow: row nowrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 7px;
+    max-height: none;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-align: left;
+    scroll-behavior: smooth;
+    padding: 0 0 0 8px;
+    min-height: 28px;
+    height: 100%;
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+}
+
+.walkin-panel #noWalkIn {
+    align-self: center;
+    white-space: nowrap;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+}
+
+.walkin-panel .walkin-room-item {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 330px;
+    min-width: 210px;
+    margin: 0;
+    padding: 5px 9px;
+    will-change: transform;
+}
+
+/* Final compact sizing: keep every settlement item visible on one row. */
+.dashboard-settlement-strip {
+    grid-template-columns:
+        minmax(0, 1.5fr)
+        minmax(0, 1.1fr)
+        minmax(0, 1.1fr)
+        minmax(0, 1.1fr)
+        minmax(0, 1.1fr)
+        minmax(0, 1.7fr)
+        minmax(0, 1.4fr)
+        minmax(0, .95fr)
+        minmax(0, .95fr) !important;
+    grid-auto-flow: row dense !important;
+    gap: 5px !important;
+}
+
+.dashboard-settlement-strip .settle-row-total {
+    padding-left: 13px;
+    padding-right: 13px;
+}
+
+.dashboard-settlement-strip .settle-row-total > span:first-child,
+.dashboard-settlement-strip .settle-row-payment .settle-col-title,
+.dashboard-settlement-strip .settle-col-deposit .settle-col-title {
+    position: relative;
+    left: 1px;
+}
+
+.dashboard-settlement-strip .settle-row-pass-coupon {
+    width: 100% !important;
+    gap: 3px !important;
+}
+
+.dashboard-settlement-strip .settle-pass-coupon-col {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    padding: 5px 10px !important;
+    gap: 3px !important;
+    overflow: hidden;
+}
+
+.dashboard-settlement-strip .settle-pass-coupon-col:first-child {
+    flex: 1.08 1 0 !important;
+}
+
+.dashboard-settlement-strip .settle-pass-coupon-col:last-child {
+    flex: .92 1 0 !important;
+}
+
+.dashboard-settlement-strip .settle-inline-title {
+    font-size: 11px !important;
+}
+
+.dashboard-settlement-strip .settle-inline-value {
+    flex: 0 1 auto;
+    font-size: 10px !important;
+    letter-spacing: 0;
+}
+
+.dashboard-settlement-strip .settle-pass-coupon-col b {
+    font-size: 10px !important;
+    margin: 0 !important;
+}
+
+.dashboard-settlement-strip .settle-col,
+.dashboard-settlement-strip .settle-col-deposit {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    gap: 3px !important;
+    overflow: hidden;
+}
+
+.dashboard-settlement-strip .settle-row-payment .settle-col,
+.dashboard-settlement-strip .settle-col-deposit {
+    padding-left: 13px !important;
+    padding-right: 13px !important;
+}
+
+.dashboard-settlement-strip .settle-row-payment > .settle-col:nth-child(1) {
+    background: #f3f8ff !important;
+    border-color: #dce9f8 !important;
+}
+
+.dashboard-settlement-strip .settle-row-payment > .settle-col:nth-child(2) {
+    background: #f7f5ff !important;
+    border-color: #e5e0f6 !important;
+}
+
+.dashboard-settlement-strip .settle-row-payment > .settle-col:nth-child(3) {
+    background: #f3faf5 !important;
+    border-color: #dcecdf !important;
+}
+
+.dashboard-settlement-strip .settle-row-pass-coupon {
+    border-right: 2px solid #cbd5e1 !important;
+}
+
+.dashboard-settlement-strip .settle-col-deposit {
+    border-right: 1px solid #e2e8f0 !important;
+}
+
+.dashboard-settlement-strip .settle-col-title,
+.dashboard-settlement-strip .settle-col-value {
+    flex: 0 0 auto !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+
+/* Titles stay left while monetary values return to the right edge. */
+.dashboard-settlement-strip .settle-col-value {
+    margin-left: auto !important;
+    text-align: right;
+}
+
+.dashboard-settlement-strip .settle-row-total > b,
+.dashboard-settlement-strip .settle-col-value > b {
+    margin-right: 1px !important;
+}
+
+.dashboard-settlement-strip .settle-pass-coupon-col {
+    justify-content: space-between !important;
+}
+
+.dashboard-settlement-strip .settle-inline-value {
+    margin-left: 3px;
+    font-size: 10px !important;
+    letter-spacing: 0;
+}
+
+/* The 1.7 ratio belongs to the whole no-show cell; keep only its input compact. */
+.dashboard-settlement-strip .settle-row-noshow .settle-noshow-actions {
+    flex: 0 0 52px !important;
+    width: 52px !important;
+    min-width: 52px !important;
+    margin-left: auto !important;
+    padding: 1px !important;
+    gap: 1px !important;
+    justify-content: center !important;
+}
+
+.dashboard-settlement-strip .settle-noshow-actions,
+.dashboard-settlement-strip .settle-cash-receipt-actions,
+.dashboard-settlement-strip .settle-cash-expense-actions {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+}
+
+.dashboard-settlement-strip .settle-cash-receipt-actions,
+.dashboard-settlement-strip .settle-cash-expense-actions {
+    flex: 0 0 58px !important;
+    width: 58px !important;
+}
+
+.dashboard-settlement-strip .settle-row-noshow,
+.dashboard-settlement-strip .settle-row-cash-receipt,
+.dashboard-settlement-strip .settle-row-cash-expense {
+    padding-left: 6px !important;
+    padding-right: 5px !important;
+    justify-content: space-between !important;
+}
+
+.dashboard-settlement-strip .settle-row-cash-receipt,
+.dashboard-settlement-strip .settle-row-cash-expense {
+    justify-content: flex-start !important;
+    gap: 6px !important;
+}
+
+.dashboard-settlement-strip .settle-cash-receipt-actions,
+.dashboard-settlement-strip .settle-cash-expense-actions {
+    margin-left: 0 !important;
+}
+
+.dashboard-settlement-strip .settle-cash-expense-input {
+    text-align: center !important;
+}
+
+.dashboard-settlement-strip .settle-noshow-input,
+.dashboard-settlement-strip .settle-cash-receipt-input,
+.dashboard-settlement-strip .settle-cash-expense-input {
+    width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+}
+
+.dashboard-settlement-strip .settle-row-noshow .settle-noshow-input {
+    flex: 0 0 16px !important;
+    width: 16px !important;
+    height: 18px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    text-align: center !important;
+    font-weight: 700;
+    appearance: textfield;
+}
+
+.dashboard-settlement-strip .settle-noshow-step {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid #cbd5e1;
+    border-radius: 3px;
+    background: #ffffff;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 15px;
+    cursor: pointer;
+}
+
+.dashboard-settlement-strip .settle-noshow-step:hover:not(:disabled) {
+    background: #e8eef5;
+}
+
+.dashboard-settlement-strip .settle-noshow-step:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+.walkin-panel {
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+}
+
+.walkin-panel .room-card.walkin {
+    grid-template-columns: 126px minmax(0, 1fr) !important;
+    gap: 0 !important;
+    padding: 1px 8px !important;
+}
+
+.walkin-panel .room-card.walkin .room-card-header {
+    width: 126px !important;
+    min-height: 26px !important;
+    padding: 0 12px 0 4px !important;
+    margin: 0 !important;
+}
+
+.walkin-panel .room-card-walkin-body {
+    min-height: 26px !important;
+    height: 26px !important;
+    padding: 0 0 0 9px !important;
+    margin: 0 !important;
+    align-self: center;
+}
+
+.walkin-panel #noWalkIn {
+    line-height: 26px;
+}
+
+/* Walk-in waiting rail: compact one-line flow with a clear leftward motion path. */
+.walkin-panel {
+    background: #e9eff5 !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, .08) !important;
+}
+
+.walkin-panel .room-card.walkin {
+    background: transparent !important;
+}
+
+.walkin-panel .room-card.walkin .room-card-header {
+    position: relative;
+    border-right: 0 !important;
+}
+
+.walkin-panel .room-card.walkin .room-card-header::after {
+    content: '';
+    position: absolute;
+    top: 5px;
+    right: 0;
+    bottom: 5px;
+    width: 2px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, transparent, #94a3b8 18%, #94a3b8 82%, transparent);
+}
+
+.walkin-panel .room-card.walkin .room-name-container {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 !important;
+}
+
+.walkin-panel .room-name-walkin {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 7px 0 5px;
+    border-radius: 6px;
+    background: #fff3e8;
+    color: #d94f00 !important;
+    line-height: 24px;
+    letter-spacing: -.25px;
+}
+
+.walkin-panel .room-name-walkin::before {
+    margin-right: 3px;
+    transform: none;
+}
+
+.walkin-panel .room-card-walkin-body {
+    position: relative;
+    gap: 8px !important;
+    padding-left: 12px !important;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+}
+
+.walkin-panel .room-card-walkin-body::before {
+    content: '';
+    position: sticky;
+    left: 0;
+    flex: 0 0 5px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #f97316;
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, .13);
+    z-index: 1;
+}
+
+.walkin-panel .walkin-room-item {
+    min-width: 220px;
+    max-width: 350px;
+    height: 28px;
+    box-sizing: border-box;
+    padding: 3px 6px 3px 10px;
+    border-color: #d9e2ec;
+    border-left: 3px solid #f97316;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, .96);
+    box-shadow: 0 2px 5px rgba(15, 23, 42, .07);
+    transition: transform 280ms cubic-bezier(.22,.75,.25,1), box-shadow 160ms ease, border-color 160ms ease;
+    will-change: transform;
+}
+
+.walkin-panel .walkin-room-item:hover {
+    transform: translateY(-1px);
+    border-color: #fb923c;
+    box-shadow: 0 4px 9px rgba(249, 115, 22, .15);
+}
+
+.walkin-panel .walkin-room-item.is-naver-card {
+    border-left-color: #1ec800;
+}
+
+.walkin-panel #noWalkIn {
+    color: #64748b !important;
+    letter-spacing: -.15px;
+}
+
+/* 2026-09-17: emphasize the walk-in rail without changing its compact layout. */
+.walkin-panel {
+    background: #bfd4e6 !important;
+    border-color: #7895ae !important;
+    border-top-width: 2px !important;
+    border-bottom-width: 2px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 2px 7px rgba(15, 23, 42, .16) !important;
+}
+
+.walkin-panel .room-name-walkin {
+    background: #fff7ed !important;
+    border: 1px solid #fdba74;
+    box-shadow: 0 1px 3px rgba(180, 83, 9, .16);
+}
+
+/* Expand only the active team label upward. Room number/state and card height stay fixed. */
+.room-card.playing .manager-info-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    display: block;
+    min-height: 34px;
+    pointer-events: none;
+}
+
+.room-card.playing .manager-team-text {
+    position: absolute;
+    top: 19px;
+    left: 24%;
+    right: 24%;
+    display: block;
+    width: auto;
+    margin: 0;
+    font-size: 30px;
+    line-height: 1;
+    max-width: 100%;
+    text-align: center;
+}
+
+.room-card.playing .team-text {
+    position: absolute;
+    right: 10px;
+    top: auto;
+    bottom: 8px;
+    max-width: 27%;
+}
+
+/* 2026-09-17: clearer text hierarchy on the active green room cards. */
+.room-card.playing .room-name,
+.room-card.playing .manager-team-text {
+    color: #ffffff !important;
+    text-shadow: 0 1px 2px rgba(3, 78, 61, .62);
+}
+
+.room-card.playing .room-state {
+    color: #d1fae5 !important;
+    text-shadow: 0 1px 1px rgba(3, 78, 61, .5);
+}
+
+.room-card.playing .team-text {
+    color: #ecfdf5 !important;
+    text-shadow: 0 1px 1px rgba(3, 78, 61, .55);
+}
+
+.room-card.playing .remain-timer {
+    color: #fff2a8 !important;
+    text-shadow: 0 1px 2px rgba(3, 78, 61, .62);
+}
+
+.room-card.playing .end-time-badge {
+    color: #047857 !important;
+    background: #ffffff !important;
+}
+
+/* 2026-09-17: refine typography inside active room cards without moving the layout. */
+.room-card.playing .room-name,
+.room-card.playing .manager-team-text {
+    font-family: 'Gmarket Sans', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.8px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+}
+
+.room-card.playing .room-name {
+    line-height: 1 !important;
+}
+
+.room-card.playing .manager-team-text {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-weight: 800 !important;
+    font-size: 30px;
+    line-height: 1.1;
+    letter-spacing: normal;
+}
+
+.room-card.playing .room-name {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-size: 25px !important;
+    font-weight: 900 !important;
+    line-height: normal !important;
+    letter-spacing: normal;
+}
+
+.room-card.playing .remain-timer {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.35px !important;
+}
+
+.room-card.playing .room-state,
+.room-card.playing .team-text,
+.room-card.playing .end-time-badge {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.35px;
+    -webkit-font-smoothing: antialiased;
+}
+
+.room-card.playing .remain-timer {
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.7px !important;
+}
+
+/* 2026-09-16: merge the branch title/header into the settlement summary. */
+.settlement-panel {
+    grid-column: 1 / 4 !important;
+    grid-row: 1 !important;
+}
+
+.beverage-container {
+    grid-column: 4 / 5 !important;
+    grid-row: 1 / span 4 !important;
+}
+
+.settlement-heading-row {
+    min-height: 90px !important;
+    margin-bottom: 7px !important;
+}
+
+.settlement-heading-row .settle-box-title {
+    display: none !important;
+}
+
+.settlement-brand-block {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    top: 5px;
+    z-index: 2;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    min-width: 0;
+}
+
+.settlement-brand-title {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+}
+
+.settlement-brand-title .header-logo {
+    width: auto !important;
+    height: 18px !important;
+    object-fit: contain;
+    flex: 0 0 auto;
+    transform: translateY(-1px);
+}
+
+.settlement-brand-title .header-title {
+    margin: 0 !important;
+    color: #f36c21;
+    font-size: 19px !important;
+    font-family: 'Gmarket Sans', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.35px;
+    line-height: 22px;
+    -webkit-text-stroke: 0;
+    text-shadow: none;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    transform: translateY(1px);
+}
+
+.settlement-brand-meta {
+    position: absolute;
+    right: 0;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 21px;
+    margin-top: 0;
+    padding-left: 0;
+    white-space: nowrap;
+    color: #475569;
+    font-size: 10px;
+    line-height: 18px;
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 700;
+}
+
+.settlement-brand-meta .daily-stat {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.settlement-brand-meta .daily-stat b {
+    color: #0f172a;
+    font-size: 15px;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+}
+
+.settlement-brand-meta .daily-stat-divider {
+    width: 1px;
+    height: 13px;
+    background: #cbd5e1;
+}
+
+.settlement-brand-meta #holidaySyncNotice {
+    display: none !important;
+}
+
+.settlement-brand-meta .day-type-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.settlement-brand-meta .day-type-label {
+    display: none;
+}
+
+.settlement-brand-prices .day-type-selector {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 1px;
+}
+
+.settlement-brand-prices .day-type-choice {
+    height: 19px;
+    min-width: 32px;
+    padding: 0 5px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    color: #64748b;
+    font: 700 10px/17px 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    cursor: pointer;
+}
+
+.settlement-brand-prices #weekdayTypeBtn.is-active {
+    border-color: #2563eb;
+    background: #2563eb;
+    color: #fff;
+}
+
+.settlement-brand-prices #weekendTypeBtn.is-active {
+    border-color: #ef4444;
+    background: #ef4444;
+    color: #fff;
+}
+
+.settlement-brand-prices {
+    position: absolute;
+    right: 0;
+    top: 25px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 0;
+    color: #475569;
+    font-size: 9px;
+    line-height: 17px;
+}
+
+.settlement-center-clock {
+    position: absolute;
+    left: 50%;
+    top: 48%;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+}
+
+.settlement-center-clock .today-date,
+.settlement-center-clock .minute-boundary-timer {
+    position: static !important;
+    width: auto !important;
+    transform: none !important;
+    margin: 0 !important;
+    font-family: 'Gmarket Sans', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 30px !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+    letter-spacing: 0.15px !important;
+}
+
+.settlement-center-clock {
+    gap: 24px !important;
+}
+
+.settlement-brand-meta .daily-stat,
+.settlement-brand-meta .daily-stat-label {
+    font-size: 12px !important;
+}
+
+.settlement-brand-meta .daily-stat b {
+    font-size: 17px !important;
+}
+
+.dashboard-settlement-strip .settle-row-pass-coupon {
+    box-sizing: border-box;
+    padding-right: 6px !important;
+}
+
+.settlement-center-clock .today-date {
+    color: #334155;
+}
+
+.settlement-center-clock .date-weekday.is-weekday {
+    color: #2563eb;
+}
+
+.settlement-center-clock .date-weekday.is-weekend {
+    color: #ef4444;
+}
+
+.settlement-brand-prices .price-setting {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 9px;
+    font-weight: 700;
+}
+
+.settlement-brand-prices input {
+    width: 36px !important;
+    height: 17px !important;
+    min-height: 17px !important;
+    padding: 0 3px !important;
+    font-size: 10px !important;
+    line-height: 15px !important;
+}
+
+.beverage-container > .settlement-header-controls #forceDayTypeBtn,
+.beverage-container > .settlement-header-controls .price-setting-stack {
+    display: none !important;
+}
+
+@font-face {
+    font-family: 'Gmarket Sans';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('https://cdn.jsdelivr.net/gh/fonts-archive/GmarketSans/GmarketSansBold.woff2') format('woff2');
+}
+
+/* 2026-09-17: remaining-time digits must use the exact same face as the end-time badge. */
+.room-card.playing .remain-timer {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    font-weight: 800 !important;
+    font-style: normal !important;
+    font-variant: normal !important;
+    font-variant-numeric: normal !important;
+    font-feature-settings: normal !important;
+    letter-spacing: -0.35px !important;
+    -webkit-font-smoothing: antialiased;
+}
+
+.settlement-brand-meta #dayTypeForcedNotice {
+    display: none !important;
+}
+
+.settlement-brand-meta .price-setting,
+.settlement-header-controls .price-setting {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 9px;
+    font-weight: 700;
+}
+
+.settlement-brand-meta #adultPrice,
+.settlement-brand-meta #childPrice,
+.settlement-header-controls #adultPrice,
+.settlement-header-controls #childPrice {
+    width: 36px !important;
+    height: 18px !important;
+    min-height: 18px !important;
+    padding: 0 4px !important;
+    font-size: 10px !important;
+    line-height: 16px !important;
+}
+
+.settlement-heading-row .minute-boundary-timer {
+    left: auto !important;
+    top: auto !important;
+    z-index: 1;
+}
+
+.settlement-header-controls {
+    position: absolute;
+    right: 6px;
+    top: 7px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    white-space: nowrap;
+}
+
+.beverage-container > .settlement-header-controls {
+    position: relative;
+    right: auto;
+    top: auto;
+    z-index: 2;
+    flex: 0 0 48px;
+    height: 48px;
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    justify-content: end;
+    align-items: center;
+    gap: 6px;
+    margin: -7px 0 4px;
+    padding: 0 0 3px;
+    border-bottom: 1px solid #e2e8f0;
+    box-sizing: border-box;
+}
+
+.beverage-container > .settlement-header-controls .price-setting-stack {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0;
+    height: 44px;
+    padding: 2px 5px;
+    border: 1px solid #dbe3ec;
+    border-radius: 7px;
+    background: #f8fafc;
+    box-sizing: border-box;
+}
+
+.beverage-container > .settlement-header-controls #forceDayTypeBtn {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    height: 24px !important;
+    padding-inline: 5px !important;
+    font-size: 10px !important;
+}
+
+.beverage-container > .settlement-header-controls .price-setting:nth-of-type(1) {
+    grid-column: 2;
+    grid-row: 1;
+}
+
+.beverage-container > .settlement-header-controls .price-setting:nth-of-type(2) {
+    grid-column: 2;
+    grid-row: 2;
+}
+
+.beverage-container > .settlement-header-controls .price-setting {
+    height: 20px;
+    min-height: 20px;
+    line-height: 20px;
+}
+
+.beverage-container > .settlement-header-controls #view-all-btn {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+}
+
+.beverage-container > .settlement-header-controls .date-filter-container {
+    grid-column: 4;
+    grid-row: 1 / span 2;
+}
+
+.settlement-header-controls #forceDayTypeBtn,
+.settlement-header-controls #view-all-btn {
+    height: 29px !important;
+    margin: 0 !important;
+    padding: 0 11px !important;
+    border-radius: 7px !important;
+    font-size: 12px !important;
+}
+
+.settlement-header-controls .date-filter-container {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    height: 36px;
+    margin: 0 !important;
+    padding: 3px 5px 3px 8px !important;
+    border: 1px solid #dbe3ec;
+    border-radius: 9px;
+    background: #f8fafc;
+    box-shadow: none !important;
+}
+
+.settlement-header-controls .date-filter-container > label {
+    margin: 0 !important;
+    font-size: 11px !important;
+    white-space: nowrap;
+}
+
+.settlement-header-controls .date-input-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.settlement-header-controls #dashboard-date {
+    width: 112px !important;
+    height: 28px !important;
+    min-height: 28px !important;
+    padding: 0 7px !important;
+    box-sizing: border-box;
+    font-size: 12px !important;
+}
+
+.beverage-container > .settlement-header-controls .date-filter-container {
+    gap: 4px !important;
+    padding-left: 5px !important;
+    padding-right: 4px !important;
+}
+
+.beverage-container > .settlement-header-controls .date-filter-container > label {
+    display: none;
+}
+
+.beverage-container > .settlement-header-controls #forceDayTypeBtn,
+.beverage-container > .settlement-header-controls #view-all-btn {
+    padding-inline: 5px !important;
+}
+
+.beverage-container > .settlement-header-controls .price-setting {
+    flex: 0 0 auto;
+    gap: 1px;
+    color: #475569;
+    font-size: 9px !important;
+    font-weight: 800;
+}
+
+.beverage-container > .settlement-header-controls #adultPrice,
+.beverage-container > .settlement-header-controls #childPrice {
+    width: 34px !important;
+    height: 20px !important;
+    min-height: 20px !important;
+    padding: 0 2px !important;
+    text-align: center;
+}
+
+.beverage-container > .settlement-header-controls .btn-today-shortcut {
+    padding-inline: 8px !important;
+}
+
+.settlement-header-controls .btn-today-shortcut {
+    height: 28px !important;
+    min-height: 28px !important;
+    margin: 0 !important;
+    padding: 0 11px !important;
+    font-size: 12px !important;
+}
+
+@media (max-width: 1180px) {
+    .settlement-brand-meta .price-setting,
+    .settlement-brand-meta #holidaySyncNotice {
+        display: none;
+    }
+
+    .settlement-header-controls {
+        gap: 4px;
+    }
+
+    .settlement-header-controls #forceDayTypeBtn,
+    .settlement-header-controls #view-all-btn {
+        padding-inline: 7px !important;
+    }
+}

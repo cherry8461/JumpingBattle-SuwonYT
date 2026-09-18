@@ -29,7 +29,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from oauth2client.service_account import ServiceAccountCredentials
 from gspread_formatting import format_cell_ranges, Color, set_column_widths
-from monitor_core.database import get_db_connection, is_sqlite_busy_error, write_transaction
+from monitor_core.database import get_db_connection
 from monitor_core.settings import (
     DATA_DIR,
     DB_FILE,
@@ -1462,103 +1462,58 @@ def save_to_db(data):
 
     
 
-_RANK_PENDING_FILE = DATA_DIR / "pending_rankings.jsonl"
-_RANK_PENDING_LOCK = threading.RLock()
-_RANK_RETRY_TIMER = None
-
-
-def _insert_ranking_row(data, emit_refresh=True):
-    with write_transaction("ranking save", timeout=0.35, attempts=6) as conn:
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO rankings
-               (log_id, play_date, play_time, team_name, score, play_count, size, level)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                data["log_id"], data["play_date"], data["play_time"],
-                data["team_name"], data["score"], data["play_count"],
-                data["size"], data["level"],
-            ),
-        )
-        inserted = cur.rowcount > 0
-    if inserted and emit_refresh:
-        socketio.emit("rank_refresh")
-    return inserted
-
-
-def _queue_pending_ranking(data):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with _RANK_PENDING_LOCK:
-        with open(_RANK_PENDING_FILE, "a", encoding="utf-8") as pending_file:
-            pending_file.write(json.dumps(data, ensure_ascii=False) + "\n")
-            pending_file.flush()
-            os.fsync(pending_file.fileno())
-
-
-def _flush_pending_rankings():
-    global _RANK_RETRY_TIMER
-    with _RANK_PENDING_LOCK:
-        _RANK_RETRY_TIMER = None
-        if not _RANK_PENDING_FILE.exists():
-            return
-        rows = []
-        for line in _RANK_PENDING_FILE.read_text(encoding="utf-8").splitlines():
-            try:
-                rows.append(json.loads(line))
-            except (TypeError, ValueError):
-                continue
-        remaining = []
-        restored = 0
-        for index, row in enumerate(rows):
-            try:
-                restored += int(_insert_ranking_row(row, emit_refresh=False))
-            except sqlite3.OperationalError as error:
-                if not is_sqlite_busy_error(error):
-                    web.logger.exception("Deferred ranking recovery failed")
-                remaining.extend(rows[index:])
-                break
-        temporary = _RANK_PENDING_FILE.with_suffix(".tmp")
-        if remaining:
-            temporary.write_text(
-                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in remaining),
-                encoding="utf-8",
-            )
-            os.replace(temporary, _RANK_PENDING_FILE)
-            _schedule_rank_retry()
-        else:
-            _RANK_PENDING_FILE.unlink(missing_ok=True)
-        if restored:
-            print(f"RANK RECOVERED | {restored} pending record(s)")
-            socketio.emit("rank_refresh")
-
-
-def _schedule_rank_retry():
-    global _RANK_RETRY_TIMER
-    with _RANK_PENDING_LOCK:
-        if _RANK_RETRY_TIMER is not None:
-            return
-        _RANK_RETRY_TIMER = threading.Timer(0.5, _flush_pending_rankings)
-        _RANK_RETRY_TIMER.daemon = True
-        _RANK_RETRY_TIMER.start()
+def _is_sqlite_busy_error(error):
+    message = str(error).lower()
+    return "database is locked" in message or "database is busy" in message or "locked" in message
 
 
 def save_to_db(data):
-    """Persist a ranking immediately, with a durable retry if SQLite is busy."""
-    try:
-        _flush_pending_rankings()
-        inserted = _insert_ranking_row(data)
-        if inserted:
-            print(f"RANK SAVE | {data['size']} | {data['team_name']} | {data['score']} points")
-        else:
-            log_stats["duplicates"] += 1
-            print(f"RANK DUPLICATE | {data['size']} | {data['team_name']} | score={data['score']}")
-        return True
-    except sqlite3.OperationalError as error:
-        if not is_sqlite_busy_error(error):
-            raise
-        _queue_pending_ranking(data)
-        _schedule_rank_retry()
-        print(f"RANK QUEUED | database busy | log_id={data.get('log_id')}")
-        return True
+    """Persist a ranking row without losing it during short concurrent writes."""
+    for attempt in range(6):
+        conn = None
+        try:
+            conn = get_db_connection(timeout=15)
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO rankings
+                (log_id, play_date, play_time, team_name, score, play_count, size, level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data["log_id"], data["play_date"], data["play_time"],
+                    data["team_name"], data["score"], data["play_count"],
+                    data["size"], data["level"],
+                ),
+            )
+            inserted = cur.rowcount > 0
+            conn.commit()
+
+            if inserted:
+                print(
+                    f"RANK SAVE | {data['size']} | {data['team_name']} | "
+                    f"{data['score']} points"
+                )
+                socketio.emit("rank_refresh")
+            else:
+                log_stats["duplicates"] += 1
+                print(
+                    f"RANK DUPLICATE | {data['size']} | {data['team_name']} | "
+                    f"score={data['score']}"
+                )
+            return True
+        except sqlite3.OperationalError as error:
+            if not _is_sqlite_busy_error(error):
+                raise
+            if attempt == 5:
+                print(
+                    f"RANK SAVE DEFERRED | database busy | log_id={data.get('log_id')}"
+                )
+                return False
+            time.sleep(0.2 * (2 ** attempt))
+        finally:
+            if conn is not None:
+                conn.close()
 
 
 def load_rows():
@@ -2524,7 +2479,7 @@ def add_booking():
     order_no = data.get('order_no')
 
     # 🎯 [교정 1]: 타임아웃 30초 장착으로 줄 서서 대기하게 만듭니다.
-    conn = get_db_connection(timeout=5)
+    conn = get_db_connection(timeout=60)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -2583,7 +2538,7 @@ def add_booking():
 @web.route('/api/booking/<int:bid>', methods=['PUT'])
 def update_booking(bid):
     data = request.json or {}
-    conn = get_db_connection(timeout=5)
+    conn = get_db_connection(timeout=60)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute('SELECT booking_date FROM bookings WHERE id=?', (bid,))
@@ -2627,7 +2582,7 @@ def update_booking(bid):
 
 @web.route('/api/booking/<int:bid>', methods=['DELETE'])
 def delete_booking(bid):
-    conn = get_db_connection(timeout=5)
+    conn = get_db_connection(timeout=60)
     cur = conn.cursor()
     try:
         # 🎯 [교정 2]: with conn 보호막을 씌워 데이터 삭제 즉시 자동으로 Commit 하고 잠금을 풀게 합니다.
@@ -3221,6 +3176,8 @@ def check_cancellations_on_startup():
             mail.logout()
             return
 
+        conn = get_db_connection()
+        cur = conn.cursor()
         cancel_count = 0
 
         # 3. 검색된 메일들을 하나씩 파싱
@@ -3255,21 +3212,20 @@ def check_cancellations_on_startup():
 
                 if booking_id:
                     # A. 워크인 대기 캐시 테이블에서 삭제
-                    with get_db_connection() as conn:
-                        cur = conn.cursor()
-                        cur.execute("DELETE FROM naver_mail_cache WHERE booking_id = ?", (booking_id,))
+                    cur.execute("DELETE FROM naver_mail_cache WHERE booking_id = ?", (booking_id,))
                     
                     # B. 정식 타임테이블(bookings)의 team 또는 name 컬럼에 해당 예약번호(이름)가 있으면 삭제
                     # (앞서 team과 name에 "[네이버] 손*리" 형태로 예약번호나 캐싱 정보를 연동했으므로 매칭하여 지웁니다)
-                        cur.execute("DELETE FROM bookings WHERE name LIKE ? OR team LIKE ?", (f"%{booking_id}%", f"%{booking_id}%"))
-                        cur.close()
-                    conn.close()
+                    cur.execute("DELETE FROM bookings WHERE name LIKE ? OR team LIKE ?", (f"%{booking_id}%", f"%{booking_id}%"))
                     
                     # C. 메일을 '읽음' 처리하여 다음 서버 구동 시 중복 스캔 방지
                     mail.store(num, '+FLAGS', '\\Seen')
                     cancel_count += 1
                     print(f"💥 [서버 구동 취소 처리] 예약번호: {booking_id} 데이터 전격 삭제 완료")
 
+        conn.commit()
+        cur.close()
+        conn.close()
         mail.logout()
         print(f"🎉 [스캔 종료] 총 {cancel_count}건의 취소 데이터가 완벽히 정리되었습니다.")
 
@@ -3307,7 +3263,7 @@ def record_naver_email_hint(raw_email_content, parsed_result=None):
     hint_key = booking_id or hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest()
     if not hint_key:
         return None
-    with get_db_connection(timeout=5) as conn:
+    with get_db_connection(timeout=60) as conn:
         conn.execute(
             '''INSERT INTO naver_email_hints (hint_key, booking_id, use_date, use_time_key, room_name)
                VALUES (?, ?, ?, ?, ?)
@@ -3328,7 +3284,7 @@ def parse_and_save_naver_email(raw_email_content):
         # parser below remains as a fallback for older stored messages.
         parsed_fields = _parse_suwonyt_naver_confirmation(raw_email_content)
         if parsed_fields:
-            conn = get_db_connection(timeout=5)
+            conn = get_db_connection(timeout=60)
             try:
                 conn.execute(
                     '''INSERT INTO naver_mail_cache
@@ -3428,7 +3384,7 @@ def parse_and_save_naver_email(raw_email_content):
             return False
 
         # 6. SQLite DB 테이블에 'INIT' 상태로 데이터 저장
-        conn = get_db_connection(timeout=5)
+        conn = get_db_connection(timeout=60)
         cur = conn.cursor()
         
         # 💡 정제된 final_name 변수가 매핑되도록 쿼리 인자 수정
@@ -3796,7 +3752,7 @@ def _sync_missed_emails_legacy():
                             if not booking_id:
                                 continue
 
-                            conn = get_db_connection(timeout=5)
+                            conn = get_db_connection(timeout=60)
                             cur = conn.cursor()
 
                             try:
@@ -4038,7 +3994,7 @@ def get_pad_status():
     현재 게임 상태, 팀 정보, 시간 등을 반환합니다.
     """
     manager_states = {}
-    conn = get_db_connection(timeout=3)
+    conn = get_db_connection(timeout=15)
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
@@ -4291,10 +4247,6 @@ def get_walkin_history():
 # ========================================================
 if __name__ == "__main__":
     init_db()
-    # Recover any ranking row that was durably queued because another process
-    # owned SQLite at the exact moment the previous process stopped.
-    if _RANK_PENDING_FILE.exists():
-        _schedule_rank_retry()
     init_google_sheets()
 
     dev_reload = os.getenv("DEV_RELOAD", "0") == "1"

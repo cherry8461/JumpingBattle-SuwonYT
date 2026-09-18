@@ -204,7 +204,7 @@ def create_remote_commands_blueprint(socketio, get_connection):
         # Retrying here prevents that normal contention from turning into a
         # Flask 500 and keeps the bridge command channel independent.
         for attempt in range(5):
-            conn = get_connection(timeout=0.5)
+            conn = get_connection(timeout=15)
             cursor = conn.cursor()
             commands = []
             try:
@@ -272,7 +272,7 @@ def create_remote_commands_blueprint(socketio, get_connection):
                 ) or attempt == 4:
                     current_app.logger.warning("Bridge sync database unavailable: %s", error)
                     return jsonify(success=False, message="Database is busy; bridge will retry"), 503
-                time.sleep(0.05 * (attempt + 1))
+                time.sleep(0.2 * (attempt + 1))
             finally:
                 conn.close()
 

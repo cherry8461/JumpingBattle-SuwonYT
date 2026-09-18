@@ -42,6 +42,8 @@ let previousWalkInIds = new Set();
 let hasWalkInListInitialized = false;
 let walkInBlinkTimer = null;
 let walkinReminderInterval = null;
+let walkinAlertPlayCount = 0;
+const WALKIN_ALERT_MAX_PLAYS = 5;
 
 const GoogleSheetsManager = window.GoogleSheetsManager;
 
@@ -128,22 +130,45 @@ function resetTimetable() {
     createTimetable(10, 24); 
 }
 
-function checkWalkinReminder(currentDataLength) {
-    // 데이터가 1개 이상이면 타이머 가동
-    if (currentDataLength > 0) {
-        if (!walkinReminderInterval) {
-            console.log("📌 대기자 존재: 30초 반복 알림 시작");
-            walkinReminderInterval = setInterval(() => {
-                alertSound.play().catch(e => console.log("재생 권한 필요"));
-            }, 10000); // 10초
-        }
-    } else {
-        // 데이터가 0개면 타이머 즉시 종료
-        if (walkinReminderInterval) {
-            console.log("✅ 대기자 없음: 반복 알림 종료");
-            clearInterval(walkinReminderInterval);
-            walkinReminderInterval = null;
-        }
+function stopWalkinReminder(resetCount = false) {
+    if (walkinReminderInterval) {
+        clearInterval(walkinReminderInterval);
+        walkinReminderInterval = null;
+    }
+    if (resetCount) walkinAlertPlayCount = 0;
+}
+
+function playWalkinAlertOnce() {
+    if (walkinAlertPlayCount >= WALKIN_ALERT_MAX_PLAYS) {
+        stopWalkinReminder();
+        return;
+    }
+
+    walkinAlertPlayCount += 1;
+    alertSound.currentTime = 0;
+    alertSound.play().catch(() => console.log("워크인 알림음 재생 권한이 필요합니다."));
+
+    if (walkinAlertPlayCount >= WALKIN_ALERT_MAX_PLAYS) {
+        stopWalkinReminder();
+        console.log(`🔕 워크인 알림음 ${WALKIN_ALERT_MAX_PLAYS}회 재생 완료`);
+    }
+}
+
+function checkWalkinReminder(currentDataLength, hasNewArrival = false) {
+    if (currentDataLength <= 0) {
+        stopWalkinReminder(true);
+        return;
+    }
+
+    // 첫 로드에 대기자가 있거나 새 워크인이 들어오면 알림 횟수를 새로 시작한다.
+    const shouldStart = !hasWalkInListInitialized || hasNewArrival;
+    if (!shouldStart) return;
+
+    stopWalkinReminder(true);
+    console.log(`📌 새 워크인 알림: 최대 ${WALKIN_ALERT_MAX_PLAYS}회`);
+    playWalkinAlertOnce();
+    if (walkinAlertPlayCount < WALKIN_ALERT_MAX_PLAYS) {
+        walkinReminderInterval = setInterval(playWalkinAlertOnce, 10000);
     }
 }
 
@@ -190,6 +215,21 @@ async function refreshWalkInList() {
         // 네이버 예약 데이터에는 식별을 위해 주입단계에서 구분을 지어줍니다.
         const processedNaver = filteredNaverData.map(item => ({ ...item, is_naver: true }));
         const combinedData = [...walkinData, ...processedNaver];
+        const isPartyRoomQueueItem = (item) => item?.is_naver && [
+            item.room,
+            item.room_size,
+            item.product,
+            item.product_name,
+            item.booking_product,
+            item.title
+        ].filter(Boolean).join(' ').includes('파티룸');
+        const displayData = combinedData
+            .map((item, index) => ({ item, index }))
+            .sort((left, right) => (
+                Number(isPartyRoomQueueItem(right.item)) - Number(isPartyRoomQueueItem(left.item))
+                || left.index - right.index
+            ))
+            .map(({ item }) => item);
 
         const currentIds = new Set(combinedData.map(item => {
             return item.is_naver ? `naver-${item.booking_id}` : getWalkInItemId(item);
@@ -206,28 +246,31 @@ async function refreshWalkInList() {
 
         // 카운트는 네이버와 워크인을 합쳐서 계산 및 알림!
         const totalCount = combinedData.length;
-        checkWalkinReminder(totalCount);
+        checkWalkinReminder(totalCount, newlyArrivedIds.size > 0);
         
         // 컨테이너 초기화
         const listContainer = document.getElementById('walkInRoomList');
         if (!listContainer) return;
+        const previousPositions = new Map(
+            Array.from(listContainer.querySelectorAll('.walkin-room-item[id]')).map((element) => [
+                element.id,
+                element.getBoundingClientRect().left
+            ])
+        );
         listContainer.innerHTML = "";
-
-        // 상단 총 카운트 동기화 (updateWalkInCountDisplay 역할 통합)
-        const walkInCountEl = document.getElementById('walkInCount');
-        if (walkInCountEl) {
-            walkInCountEl.textContent = `${totalCount}팀`;
-        }
 
         // 대기자가 아예 없으면 안내 문구 띄우고 종료
         if (totalCount === 0) {
             listContainer.innerHTML = '<span id="noWalkIn" style="color: #64748b; font-size: 13px;">대기 중인 손님이 없습니다.</span>';
+            previousWalkInIds = currentIds;
+            hasWalkInListInitialized = true;
             return;
         }
 
-        combinedData.forEach(item => {
+        displayData.forEach(item => {
             const card = document.createElement('div');
             card.className = 'walkin-room-item';
+            const isPartyRoomBooking = isPartyRoomQueueItem(item);
             
             const itemId = item.is_naver ? `naver-${item.booking_id}` : getWalkInItemId(item);
             card.id = itemId;
@@ -250,7 +293,9 @@ async function refreshWalkInList() {
                     childCount,
                     roomSize: item.room_size || item.room || '',
                     roomFast: !!item.room_fast,
-                    partyRoom: item.is_naver && String(item.room || item.product || item.product_name || '').includes('파티룸'),
+                    partyRoom: isPartyRoomBooking,
+                    partyConcept: item.party_concept || '',
+                    partyPeople: item.party_people || '',
                     reservationTime: item.time || ''
                 };
                 event.dataTransfer.effectAllowed = 'move';
@@ -285,22 +330,48 @@ async function refreshWalkInList() {
             const btn = card.querySelector('.action-btn');
             if (item.is_naver) {
                 card.classList.add('is-naver-card'); 
-                card.querySelector('.walkin-team-text').innerHTML = `<span style="color: #1ec800;">네이버</span>`;
-                const naverLabel = item.team ? `네이버 · ${item.team}` : '네이버';
-                const naverTeamElement = card.querySelector('.walkin-team-text');
-                naverTeamElement.textContent = naverLabel;
-                naverTeamElement.style.color = '#1ec800';
-                const details = [item.name, item.time, item.phone, item.difficulty]
-                    .filter(value => value !== undefined && value !== null && String(value).trim() !== '')
-                    .join(' · ');
-                card.querySelector('.info span:nth-of-type(2)').textContent = details;
+                if (isPartyRoomBooking) {
+                    card.classList.add('is-party-room-booking');
+                    btn.remove();
+                }
+                if (isPartyRoomBooking) {
+                    const info = card.querySelector('.info');
+                    const partyDetails = [
+                        '파티룸',
+                        item.name || '이름 미확인',
+                        item.time || '시간 미확인',
+                        item.party_people || (item.people ? `${item.people}명` : '인원 미확인'),
+                        item.party_concept || '컨셉 미확인'
+                    ];
+                    info.replaceChildren();
+                    partyDetails.forEach((value, index) => {
+                        if (index > 0) {
+                            const separator = document.createElement('span');
+                            separator.className = 'party-room-info-separator';
+                            separator.textContent = '|';
+                            info.appendChild(separator);
+                        }
+                        const part = document.createElement(index === 0 ? 'b' : 'span');
+                        part.className = index === 0 ? 'walkin-team-text party-room-info-title' : 'party-room-info-value';
+                        part.textContent = String(value);
+                        info.appendChild(part);
+                    });
+                } else {
+                    const naverTeamElement = card.querySelector('.walkin-team-text');
+                    naverTeamElement.textContent = item.team ? `네이버 · ${item.team}` : '네이버';
+                    naverTeamElement.style.color = '#1ec800';
+                    const details = [item.name, item.time, item.phone, item.difficulty]
+                        .filter(value => value !== undefined && value !== null && String(value).trim() !== '')
+                        .join(' · ');
+                    card.querySelector('.info span:nth-of-type(2)').textContent = details;
+                }
 
                 // 🎯 네이버 버튼 클릭 시 작동하는 검문 구역
-                btn.addEventListener('click', async () => {
+                if (!isPartyRoomBooking) btn.addEventListener('click', async () => {
                     
                     // 🚨 [파티룸 예약 사전 검사 가드]
                     // 데이터의 roomSize(또는 백엔드에서 준 room 값)에 '파티룸'이 포함되어 있는지 검사합니다.
-                    if (roomSize.includes('파티룸') || (item.room && item.room.includes('파티룸'))) {
+                    if (isPartyRoomBooking) {
                         
                         const isTimeChecked = await showGameCardConfirmPopup(
                             card,
@@ -325,6 +396,32 @@ async function refreshWalkInList() {
             }
 
             listContainer.appendChild(card);
+        });
+
+        // Re-rendered queue items keep their visual position briefly, then slide left
+        // into the newly available slot when an earlier waiting item disappears.
+        const movedCards = Array.from(listContainer.querySelectorAll('.walkin-room-item[id]'));
+        movedCards.forEach((card) => {
+            const oldLeft = previousPositions.get(card.id);
+            if (oldLeft === undefined) return;
+            const newLeft = card.getBoundingClientRect().left;
+            const deltaX = oldLeft - newLeft;
+            if (Math.abs(deltaX) < 1) return;
+            card.style.transition = 'none';
+            card.style.transform = `translateX(${deltaX}px)`;
+        });
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                movedCards.forEach((card) => {
+                    if (!card.style.transform) return;
+                    card.style.transition = 'transform 280ms cubic-bezier(.22,.75,.25,1)';
+                    card.style.transform = 'translateX(0)';
+                    card.addEventListener('transitionend', () => {
+                        card.style.transition = '';
+                        card.style.transform = '';
+                    }, { once: true });
+                });
+            });
         });
 
         // 새로운 데이터 유입 시 박스 깜빡임 애니메이션 가동
@@ -2664,7 +2761,153 @@ async function consumeIntakeSource(data) {
     if (!response.ok) throw new Error('대기열 완료 처리에 실패했습니다.');
 }
 
+const PARTY_ROOM_SLOT_COUNT = 6;
+
+function createPartyRoomGroupId(data) {
+    const sourceId = String(data?.sourceId || 'manual').replace(/[^a-zA-Z0-9_-]/g, '');
+    return `party-${sourceId || 'manual'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getPartyRoomTargetCells(startCell) {
+    const room = (startCell?.id.split('-')[3] || '').toUpperCase();
+    if (!room) return [];
+    const cells = [...document.querySelectorAll(`td[id^="cell-"][id$="-${room}"]`)];
+    const startIndex = cells.indexOf(startCell);
+    return startIndex < 0 ? [] : cells.slice(startIndex, startIndex + PARTY_ROOM_SLOT_COUNT);
+}
+
+function getCellTimeLabel(cell) {
+    const parts = String(cell?.id || '').split('-');
+    return parts.length >= 4 ? `${parts[1]}:${parts[2]}` : '';
+}
+
+function getPartyRoomConflicts(cells) {
+    return cells.flatMap(cell => [...cell.querySelectorAll('.booking-card')]
+        .filter(card => card.dataset.manualNaverBlock !== 'true' && !isBlankCellButtonCard(card))
+        .map(card => ({ cell, card })));
+}
+
+function buildIntakePaymentData(data, targetCell, priorPayment = {}) {
+    const targetRoom = targetCell.id.split('-')[3] || '';
+    const roomFlags = getIntakeRoomFlags(data, targetRoom);
+    const paymentData = {
+        ...priorPayment,
+        dashboardPlaceholder: false,
+        naverManualBlock: false,
+        totalPeople: data.people || '',
+        adultCount: data.adultCount || 0,
+        childCount: data.childCount || 0,
+        roomFlags,
+        roomFlagLabel: roomFlagLabelFromFlags(roomFlags),
+        partyRoom: true
+    };
+    if (data.sourceType === 'naver') {
+        paymentData.isBooker = true;
+        paymentData.depositPaid = true;
+        paymentData.depositAmount = 5000;
+        paymentData.reservationTime = data.reservationTime || formatTimeKeyForReservationBadge(
+            `${targetCell.id.split('-')[1]}-${targetCell.id.split('-')[2]}`
+        );
+        paymentData.naverBookingId = data.sourceId;
+    }
+    return paymentData;
+}
+
+function applyIntakeDataToCard(card, targetCell, data, paymentData) {
+    const room = targetCell.id.split('-')[3] || '';
+    const roomFlagLabel = paymentData.roomFlagLabel || '-';
+    card.dataset.manualNaverBlock = 'false';
+    card.dataset.createdFromCellButton = 'false';
+    card.classList.remove('naver-manual-block-card');
+    card.dataset.phone = data.phone || '';
+    card.dataset.paymentData = JSON.stringify(paymentData);
+    updateCard(card, {
+        name: data.name || '',
+        team: String(data.team || '').slice(0, 10),
+        phone: data.phone || '',
+        level: data.level || '',
+        people: data.people || '',
+        paid: false,
+        completed: false,
+        roomFlagLabel,
+        payment_data: card.dataset.paymentData
+    });
+    applyCardRoomFlagsForRoom(card, room);
+}
+
+async function deleteCardForPartyReplacement(card) {
+    if (!card) return;
+    const bid = parseInt(card.dataset.bid || '0', 10);
+    if (bid > 0) {
+        const response = await fetch(`/api/booking/${bid}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('기존 수동마감 카드 삭제에 실패했습니다.');
+    }
+    card.remove();
+}
+
+async function beginPartyRoomDrop(targetCell, data, isPast) {
+    const cells = getPartyRoomTargetCells(targetCell);
+    if (cells.length < PARTY_ROOM_SLOT_COUNT) {
+        showToast('이 시간부터 2시간을 배치할 수 있는 타임칸이 부족합니다.', targetCell);
+        return;
+    }
+    const start = getCellTimeLabel(cells[0]);
+    const endCell = cells[cells.length - 1];
+    const endParts = endCell.id.split('-');
+    const endMinutes = (parseInt(endParts[1], 10) * 60) + parseInt(endParts[2], 10) + 20;
+    const end = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+    const anchor = targetCell.querySelector('.naver-manual-block-card, .cell-add-button') || targetCell;
+    const approved = await showGameCardConfirmPopup(
+        anchor,
+        `${start}부터 2시간을 파티룸으로 입력할까요?`,
+        `${start} ~ ${end}, 총 6타임에 파티룸 카드를 만듭니다.`
+    );
+    if (!approved) return;
+
+    const conflicts = getPartyRoomConflicts(cells);
+    if (conflicts.length) {
+        const conflictTimes = [...new Set(conflicts.map(item => getCellTimeLabel(item.cell)))].join(', ');
+        const continueWithConflict = await showGameCardConfirmPopup(
+            anchor,
+            '겹치는 게임카드가 있습니다.',
+            `${conflictTimes}에 기존 카드가 있습니다. 기존 카드는 유지하고 파티룸 카드를 함께 추가할까요?`
+        );
+        if (!continueWithConflict) return;
+    }
+
+    const partyGroupId = createPartyRoomGroupId(data);
+    const createdCards = [];
+    for (let index = 0; index < cells.length; index++) {
+        const cell = cells[index];
+        const replacement = getIntakeDropReplacementCard(cell, { target: cell });
+        const card = replacement || addCard(cell, {}, 0, isPast);
+        const prior = parsePaymentDataSafe(card.dataset.paymentData) || {};
+        const paymentData = buildIntakePaymentData(data, cell, prior);
+        paymentData.partyGroupId = partyGroupId;
+        paymentData.partyGroupSeq = index + 1;
+        paymentData.reservationTime = formatTimeKeyForReservationBadge(
+            `${cell.id.split('-')[1]}-${cell.id.split('-')[2]}`
+        );
+        applyIntakeDataToCard(card, cell, data, paymentData);
+        await saveCard(card);
+        if (!(parseInt(card.dataset.bid || '0', 10) > 0)) {
+            throw new Error(`${getCellTimeLabel(cell)} 파티룸 카드 저장에 실패했습니다.`);
+        }
+        createdCards.push(card);
+    }
+
+    await consumeIntakeSource(data);
+    await refreshWalkInList();
+    updateAllCardQueueStatuses();
+    recomputeReservationConflictIndicators();
+    showToast(`${start}부터 2시간 파티룸 카드 6개를 만들었습니다.`, createdCards[0]);
+}
+
 async function placeIntakeOnTimeline(targetCell, event, data, isPast) {
+    if (data.partyRoom) {
+        await beginPartyRoomDrop(targetCell, data, isPast);
+        return;
+    }
     const replacement = getIntakeDropReplacementCard(targetCell, event);
     const label = data.team || data.name || (data.sourceType === 'naver' ? '네이버 예약' : '워크인');
     if (replacement) {
@@ -3565,11 +3808,8 @@ function renderRoomStatus(apiData) {
         walkinCard.innerHTML = `
             <div class="room-card-header">
                 <div class="room-name-container">
-                    <span class="room-name-naver">네이버 예약</span>
-                    <span class="room-name-and"> & </span>
                     <span class="room-name-walkin">워크인 대기</span>
                 </div>
-                <span class="room-state" id="walkInCount">0팀</span>
             </div>
             <div class="room-card-walkin-body" id="walkInRoomList">
                 <span id="noWalkIn" style="color: #64748b; font-size: 13px;">입력대기 중인 팀이 없습니다.</span>
@@ -3902,7 +4142,7 @@ function buildCardMetaHtml(level, people, roomFlagLabel) {
     const rawLevel = String(level ?? '').trim();
     const peoplePart = rawPeople && rawPeople !== '-' && rawPeople !== '미입력' && rawPeople !== '인원'
         ? `${rawPeople.replace(/명$/u, '')}명`
-        : '인원';
+        : '-';
     const levelPart = rawLevel && rawLevel !== '-' && rawLevel !== '미입력' && rawLevel !== '난이도'
         ? rawLevel
         : '난이도';
@@ -4107,11 +4347,11 @@ function getDashboardDateYMD() {
 
 function updateTodayDate() { 
     const now = new Date(); 
-    const year = String(now.getFullYear()).slice(-2); 
+    const year = String(now.getFullYear());
     const month = String(now.getMonth() + 1).padStart(2, '0'); 
     const date = String(now.getDate()).padStart(2, '0'); 
     const week = ['일', '월', '화', '수', '목', '금', '토']; 
-    document.getElementById('currentDate').innerText = `${year}-${month}-${date} ${week[now.getDay()]}`; 
+    document.getElementById('currentDate').innerHTML = `<span class="date-value">${year}-${month}-${date}</span> <span class="date-weekday">${week[now.getDay()]}</span>`;
 }
 
 function getCurrentDayType() {
@@ -4310,7 +4550,9 @@ function formatCurrencyInput(input) {
 let supplyHistoryEntries = [];
 let dashboardNoShowManualCount = 0;
 let dashboardCashExpenseManualAmount = 0;
+let dashboardCashReceiptManualAmount = 0;
 let dashboardCashExpenseSaveTimer = null;
+let dashboardCashReceiptSaveTimer = null;
 let dashboardNoShowSaveTimer = null;
 window.supplyHistoryEntries = supplyHistoryEntries;
 
@@ -4365,7 +4607,23 @@ async function loadDashboardNoShowCount() {
         // [추가] 과거 날짜면 노쇼 입력창을 비활성화(disabled) 처리
         input.disabled = isPast;
     }
+    const minusButton = document.getElementById('dashboardNoShowMinus');
+    const plusButton = document.getElementById('dashboardNoShowPlus');
+    if (minusButton) minusButton.disabled = isPast;
+    if (plusButton) plusButton.disabled = isPast;
     updateDashboardSettlementSummary();
+}
+
+function chooseDayType(type) {
+    if (type !== 'weekday' && type !== 'weekend') return;
+    const targetDate = getDashboardDateYMD();
+    const forced = type !== getAutoDayType();
+    if (forced) {
+        saveForcedDayType(targetDate, type);
+    } else {
+        clearForcedDayType(targetDate);
+    }
+    setDayType(type, { forced });
 }
 
 async function persistDashboardCashExpenseAmount() {
@@ -4443,6 +4701,8 @@ async function loadSupplyHistoryFromDB() {
             cardAmount: e.card_amount,
             cashAmount: e.cash_amount,
             transferAmount: e.transfer_amount,
+            cashReceiptAmount: e.cash_receipt_amount || 0,
+            cashExpenseAmount: e.cash_expense_amount || 0,
             totalAmount: e.total_amount
         }));
         window.supplyHistoryEntries = supplyHistoryEntries;
@@ -4499,6 +4759,12 @@ function formatSupplyHistoryItem(entry) {
     let itemLabel = item;
     if (normalizedItem === '기타' && etcText) {
         itemLabel = `${item}(${etcText})`;
+    }
+    if (normalizedItem === '현금영수증') {
+        itemLabel = `현금영수증 ${Number(entry?.cashReceiptAmount || 0).toLocaleString()}원`;
+    }
+    if (normalizedItem === '현금지출') {
+        itemLabel = `현금지출${etcText ? `(${etcText})` : ''} ${Number(entry?.cashExpenseAmount || 0).toLocaleString()}원`;
     }
     return itemLabel;
 }
@@ -4604,6 +4870,7 @@ function computeTeamPaidTotalsFromCards() {
     let card = 0;
     let cash = 0;
     let transfer = 0;
+    let cashReceipt = 0;
 
     const cards = document.querySelectorAll('.booking-card');
     cards.forEach((el) => {
@@ -4616,9 +4883,10 @@ function computeTeamPaidTotalsFromCards() {
         card += parseInt(paymentData.cardInput, 10) || 0;
         cash += parseInt(paymentData.cashInput, 10) || 0;
         transfer += parseInt(paymentData.transferInput, 10) || 0;
+        cashReceipt += parseInt(paymentData.cashReceiptInput, 10) || 0;
     });
 
-    return { card, cash, transfer, total: card + cash + transfer };
+    return { card, cash, transfer, cashReceipt, total: card + cash + transfer };
 }
 
 function computeSupplyTotalsFromHistory() {
@@ -4626,12 +4894,16 @@ function computeSupplyTotalsFromHistory() {
     let cardExcludingDeposit = 0;
     let cash = 0;
     let transfer = 0;
+    let cashReceipt = 0;
+    let cashExpense = 0;
 
     supplyHistoryEntries.forEach((entry) => {
         const cardAmount = parseInt(entry.cardAmount, 10) || 0;
         card += cardAmount;
         cash += parseInt(entry.cashAmount, 10) || 0;
         transfer += parseInt(entry.transferAmount, 10) || 0;
+        cashReceipt += parseInt(entry.cashReceiptAmount, 10) || 0;
+        cashExpense += parseInt(entry.cashExpenseAmount, 10) || 0;
 
         // 정산 카드칸에는 예약금(예) 카드금액을 제외하고 반영
         const item = String(entry?.item || '').replace(/\s+/g, '');
@@ -4646,6 +4918,8 @@ function computeSupplyTotalsFromHistory() {
         cardExcludingDeposit,
         cash,
         transfer,
+        cashReceipt,
+        cashExpense,
         total: card + cash + transfer,
     };
 }
@@ -4656,7 +4930,8 @@ function updateDashboardSettlementSummary() {
     // 정산 카드값: 모달 카드 + 기타판매 카드(예약금(예) 제외)
     const card = team.card + supply.cardExcludingDeposit;
     const cashBeforeExpense = team.cash + supply.cash;
-    const cash = cashBeforeExpense - dashboardCashExpenseManualAmount;
+    // 현금지출은 매출이 아니라 별도 정산 정보다. 현금 칸에는 실제 수납액을 표시한다.
+    const cash = cashBeforeExpense;
     const transfer = team.transfer + supply.transfer;
     let depositTotal = 0;
     let noShowTotal = 0;
@@ -4667,9 +4942,23 @@ function updateDashboardSettlementSummary() {
 
     // booking-card의 paymentData에서 직접 합산
     const cards = document.querySelectorAll('.booking-card');
+    let todayTeamCount = 0;
+    let todayPeopleCount = 0;
     cards.forEach((el) => {
         const paymentData = parsePaymentDataSafe(el.dataset.paymentData);
         if (!paymentData) return;
+
+        const isNonGamePlaceholder = paymentData.dashboardPlaceholder === true
+            || el.classList.contains('naver-manual-block-card')
+            || el.querySelector('.p-team-text')?.textContent.trim() === '네이버 수동 마감';
+        if (!isNonGamePlaceholder) {
+            todayTeamCount += 1;
+            const peopleFromPayment = parseInt(paymentData.totalPeople, 10);
+            const peopleFromCard = parseInt(el.querySelector('.p-people')?.textContent, 10);
+            todayPeopleCount += Number.isFinite(peopleFromPayment)
+                ? peopleFromPayment
+                : (Number.isFinite(peopleFromCard) ? peopleFromCard : 0);
+        }
         
         // 예약금 합산: 예약자 배지(isBooker)와 무관하게 예약금 체크(depositPaid)일 때만 반영
         if (paymentData.depositPaid) {
@@ -4684,6 +4973,11 @@ function updateDashboardSettlementSummary() {
         couponAdultCount += parseInt(paymentData.couponAdult, 10) || 0;
         couponStudentCount += parseInt(paymentData.couponChild, 10) || 0;
     });
+
+    const teamCountEl = document.getElementById('dashboardTodayTeamCount');
+    const peopleCountEl = document.getElementById('dashboardTodayPeopleCount');
+    if (teamCountEl) teamCountEl.textContent = todayTeamCount.toLocaleString();
+    if (peopleCountEl) peopleCountEl.textContent = todayPeopleCount.toLocaleString();
 
     // supplyHistoryEntries에서 예약금 추가 합산 (기존 로직 유지)
     supplyHistoryEntries.forEach((entry) => {
@@ -4702,6 +4996,10 @@ function updateDashboardSettlementSummary() {
     const displayNoShowTotal = noShowTotal + manualNoShowAmount;
     const depositTotalWithManualNoShow = depositTotal + manualNoShowAmount;
     // 수동 당일취소&노쇼 입력값은 예약금에 합산하고, 전체합계는 반영된 예약금 기준으로 계산한다.
+    // 현금영수증은 실제 현금 수납액의 일부지만 카드 단말기 대조액에도 잡힌다.
+    // 카드 표시값에만 더하고, 전체매출은 실제 결제 원본으로 계산해 중복을 막는다.
+    const cashReceiptTotal = team.cashReceipt + supply.cashReceipt;
+    const terminalCard = card + cashReceiptTotal;
     const total = card + cash + transfer + depositTotalWithManualNoShow + noShowTotal;
 
     const setText = (id, value) => {
@@ -4709,12 +5007,16 @@ function updateDashboardSettlementSummary() {
         if (el) el.textContent = typeof value === 'number' ? value.toLocaleString() : value;
     };
 
-    setText('dashboardSettleCard', card);
+    setText('dashboardSettleCard', terminalCard);
     setText('dashboardSettleCash', cash);
     setText('dashboardSettleTransfer', transfer);
     setText('dashboardSettleTotal', total);
     setText('dashboardSettleDeposit', depositTotalWithManualNoShow);
     setText('dashboardSettleNoShow', displayNoShowTotal);
+    const cashReceiptEl = document.getElementById('dashboardCashReceiptInput');
+    if (cashReceiptEl) cashReceiptEl.textContent = `${cashReceiptTotal.toLocaleString()}원`;
+    const cashExpenseEl = document.getElementById('dashboardCashExpenseInput');
+    if (cashExpenseEl) cashExpenseEl.textContent = `${supply.cashExpense.toLocaleString()}원`;
     setText('dashboardSettlePassAdult', passAdultCount);
     setText('dashboardSettlePassStudent', passStudentCount);
     setText('dashboardSettleCouponAdult', couponAdultCount);
@@ -4735,6 +5037,17 @@ function addDashboardNoShowAmount() {
     scheduleDashboardNoShowSave();
 }
 
+function changeDashboardNoShowCount(delta) {
+    const input = document.getElementById('dashboardNoShowInput');
+    if (!input || input.disabled) return;
+
+    const change = Number(delta) || 0;
+    dashboardNoShowManualCount = Math.max(0, Math.min(99, dashboardNoShowManualCount + change));
+    input.value = String(dashboardNoShowManualCount);
+    updateDashboardSettlementSummary();
+    scheduleDashboardNoShowSave();
+}
+
 function updateSupplyRow(row) {
     if (!row) return;
     // per-row UI는 단순 입력만 유지, 합계는 footer에서 통합 표시
@@ -4750,6 +5063,9 @@ function getSpecialPaymentCurrent() {
     const etcCash = toNumber(document.getElementById('spEtcCash')?.value);
     const etcTransfer = toNumber(document.getElementById('spEtcTransfer')?.value);
     const etcText = String(document.getElementById('spEtcText')?.value || '').trim();
+    const cashReceiptAmount = toNumber(document.getElementById('spCashReceipt')?.value);
+    const cashExpenseAmount = toNumber(document.getElementById('spCashExpense')?.value);
+    const cashExpenseText = String(document.getElementById('spCashExpenseText')?.value || '').trim();
 
     return {
         card: partyCardInput + depositCardAmount + etcCard,
@@ -4763,7 +5079,10 @@ function getSpecialPaymentCurrent() {
         etcCard,
         etcCash,
         etcTransfer,
-        etcText
+        etcText,
+        cashReceiptAmount,
+        cashExpenseAmount,
+        cashExpenseText
     };
 }
 
@@ -4868,8 +5187,35 @@ function applySupplyInputs() {
             isDeposit: false
         });
     }
+    if (special.cashReceiptAmount) {
+        newEntries.push({
+            time: now,
+            item: '현금영수증',
+            quantity: null,
+            cardAmount: 0,
+            cashAmount: 0,
+            transferAmount: 0,
+            cashReceiptAmount: special.cashReceiptAmount,
+            cashExpenseAmount: 0,
+            totalAmount: 0
+        });
+    }
+    if (special.cashExpenseAmount) {
+        newEntries.push({
+            time: now,
+            item: '현금지출',
+            quantity: null,
+            etcText: special.cashExpenseText,
+            cardAmount: 0,
+            cashAmount: 0,
+            transferAmount: 0,
+            cashReceiptAmount: 0,
+            cashExpenseAmount: special.cashExpenseAmount,
+            totalAmount: 0
+        });
+    }
 
-    ['spPartyCard','spPartyCash','spPartyTransfer','spEtcCard','spEtcCash','spEtcTransfer','spEtcText'].forEach((id) => {
+    ['spPartyCard','spPartyCash','spPartyTransfer','spEtcCard','spEtcCash','spEtcTransfer','spEtcText','spCashReceipt','spCashExpense','spCashExpenseText'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
@@ -5855,6 +6201,39 @@ function updateBookingPresence(cell) {
     // 카드 자체가 has-booking을 항상 보유하므로 no-op
 }
 
+function updateDashboardCashReceiptInputDisplay() {
+    updateDashboardSettlementSummary();
+}
+
+async function loadDashboardCashReceiptAmount() {
+    updateDashboardSettlementSummary();
+}
+
+async function persistDashboardCashReceiptAmount() {
+    const targetDate = getDashboardDateYMD();
+    try {
+        const res = await fetch(`/api/settlement/cash_receipt?date=${encodeURIComponent(targetDate)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cashReceipt: dashboardCashReceiptManualAmount })
+        });
+        if (!res.ok) throw new Error('현금영수증 저장 실패');
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function handleDashboardCashReceiptInput(input) {
+    const digits = String(input?.value || '').replace(/[^\d]/g, '');
+    dashboardCashReceiptManualAmount = digits ? parseInt(digits, 10) : 0;
+    updateDashboardCashReceiptInputDisplay();
+    updateDashboardSettlementSummary();
+    if (dashboardCashReceiptSaveTimer) clearTimeout(dashboardCashReceiptSaveTimer);
+    dashboardCashReceiptSaveTimer = setTimeout(persistDashboardCashReceiptAmount, 350);
+}
+
+window.handleDashboardCashReceiptInput = handleDashboardCashReceiptInput;
+
 // Add a blank game card directly from a timetable cell.  The existing payment
 // modal is used so time and room always match the cell the staff selected.
 function openNewBookingModalForCell(cell) {
@@ -5959,6 +6338,23 @@ function setDayType(type, options = {}) {
         dayTypeDisplay.textContent = (type === 'weekday') ? '평일' : '주말';
         dayTypeDisplay.style.color = (type === 'weekday') ? '#1976d2' : '#d32f2f';
     }
+    const weekdayTypeBtn = document.getElementById('weekdayTypeBtn');
+    const weekendTypeBtn = document.getElementById('weekendTypeBtn');
+    if (weekdayTypeBtn) {
+        const selected = type === 'weekday';
+        weekdayTypeBtn.classList.toggle('is-active', selected);
+        weekdayTypeBtn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    }
+    if (weekendTypeBtn) {
+        const selected = type === 'weekend';
+        weekendTypeBtn.classList.toggle('is-active', selected);
+        weekendTypeBtn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    }
+    const dateWeekday = document.querySelector('#currentDate .date-weekday');
+    if (dateWeekday) {
+        dateWeekday.classList.toggle('is-weekday', type === 'weekday');
+        dateWeekday.classList.toggle('is-weekend', type === 'weekend');
+    }
     const forceDayTypeBtn = document.getElementById('forceDayTypeBtn');
     if (forceDayTypeBtn) {
         forceDayTypeBtn.textContent = (type === 'weekday') ? '주말로변경' : '평일로변경';
@@ -6003,6 +6399,7 @@ async function loadBookings() {
 
         await loadSupplyHistoryFromDB();
         await loadDashboardCashExpenseAmount();
+        await loadDashboardCashReceiptAmount();
         await loadDashboardNoShowCount();
 
         const res = await fetch(`/api/booking/list?date=${encodeURIComponent(targetDate)}`);
@@ -6187,6 +6584,7 @@ window.onload = async function() {
     renderRoomStatus({ map: {}, status: {}, data: {} });
     await loadSupplyHistoryFromDB();
     await loadDashboardCashExpenseAmount();
+    await loadDashboardCashReceiptAmount();
     await loadDashboardNoShowCount();
     initSupplyTable();
     initSupplyInputNavigation();
@@ -6205,12 +6603,12 @@ let currentPaymentCell = null;
 let currentPaymentCard = null;
 
 // 라인 기반 네비게이션 정의
-// Line 0: 팀명 / Line 1: 성함·방·난이도 / Line 2: 인원현황 / Line 3: 결제수단
+// Line 0: 팀명 / Line 1: 성함·방·난이도 / Line 2: 인원현황 / Line 3: 결제수단·확인
 const NAV_LINES = [
     ['paymentTeamName'],
     ['paymentName', 'paymentRoomSelect', 'paymentLevel'],
     ['totalPeople', 'adultCount', 'nonCardAdultCount', 'adultPassCount', 'childCount', 'childPassCount', 'couponCount'],
-    ['cardInput', 'cashInput', 'transferInput']
+    ['cardInput', 'cashInput', 'transferInput', 'cashReceiptInput', 'paymentSaveButton']
 ];
 const NAV_SPAN_FIELDS = { paymentTeamName: 'team', paymentName: 'name', paymentLevel: 'level' };
 
@@ -6494,7 +6892,11 @@ function saveField(input, field) {
                 card.dataset.phone = newValue;
             }
             syncLinkedQueueItemFromCard(card);
-            saveCard(card);
+            saveCard(card).then(() => {
+                if (['team', 'name', 'phone'].includes(field)) {
+                    return syncPartyRoomGroupIdentity(card);
+                }
+            }).catch(error => console.error('카드 정보 저장 실패:', error));
         }
     }
     
@@ -6565,6 +6967,7 @@ function openPaymentModalFromTimeline(cellView) {
     document.getElementById("cardInput").value = paymentData?.cardInput || "";
     document.getElementById("cashInput").value = paymentData?.cashInput || "";
     document.getElementById("transferInput").value = paymentData?.transferInput || "";
+    document.getElementById("cashReceiptInput").value = paymentData?.cashReceiptInput || "";
     const initialRoomFlags = paymentData?.roomFlags || roomFlagsFromLabel(parsedMeta.roomFlagLabel);
     setRoomFlags(normalizeRoomFlagsForRoom(room, initialRoomFlags));
 
@@ -6633,6 +7036,7 @@ function openPaymentModal(queueItem) {
     document.getElementById("cardInput").value = paymentData?.cardInput || "";
     document.getElementById("cashInput").value = paymentData?.cashInput || "";
     document.getElementById("transferInput").value = paymentData?.transferInput || "";
+    document.getElementById("cashReceiptInput").value = paymentData?.cashReceiptInput || "";
     setPaymentRoomValue(currentPaymentItem?.dataset?.room || 'C1');
     const queueRoom = currentPaymentItem?.dataset?.room || 'C1';
     setRoomFlags(normalizeRoomFlagsForRoom(queueRoom, paymentData?.roomFlags || {}));
@@ -6658,6 +7062,8 @@ function closePaymentModal() {
         && !(parseInt(temporaryCard.dataset.bid || '0', 10) > 0)) {
         temporaryCard.remove();
     }
+    const partyCheckbox = document.getElementById('partyRoom');
+    if (partyCheckbox) partyCheckbox.disabled = false;
     currentPaymentItem = null;
     currentPaymentCell = null;
     currentPaymentCard = null;
@@ -6814,15 +7220,6 @@ function initPaymentModalArrowNavigation() {
 
         const fieldId = target.id || target.dataset.navId;
         if (!fieldId) return;
-
-        if (e.key === 'Enter' && fieldId === 'transferInput') {
-            e.preventDefault();
-            const saveBtn = modal.querySelector('.save-payment-btn');
-            if (saveBtn instanceof HTMLButtonElement) {
-                saveBtn.focus();
-            }
-            return;
-        }
 
         const pos = navGetPos(fieldId);
         if (!pos) return;
@@ -7079,6 +7476,7 @@ function calculatePayment() {
     const cardInput = parseInt(document.getElementById("cardInput").value) || 0;
     const cashInput = parseInt(document.getElementById("cashInput").value) || 0;
     const transferInput = parseInt(document.getElementById("transferInput").value) || 0;
+    const cashReceiptInput = parseInt(document.getElementById("cashReceiptInput").value) || 0;
     const userTotal = cardInput + transferInput + cashInput;
     
     // 결제 현황 표시
@@ -7159,6 +7557,52 @@ function calculatePayment() {
     updatePeopleInputErrors();
 }
 
+async function syncPartyRoomGroupIdentity(sourceCard) {
+    if (!sourceCard) return;
+    const sourcePayment = parsePaymentDataSafe(sourceCard.dataset.paymentData) || {};
+    const groupId = String(sourcePayment.partyGroupId || '').trim();
+    if (!groupId) return;
+
+    const team = sourceCard.querySelector('.p-team-text')?.textContent.trim() || '';
+    const name = sourceCard.querySelector('.p-name-text')?.textContent.trim() || '';
+    const phone = sourceCard.dataset.phone || '';
+    const groupCards = [...document.querySelectorAll('.booking-card')].filter(card => {
+        if (card === sourceCard) return false;
+        const paymentData = parsePaymentDataSafe(card.dataset.paymentData) || {};
+        return String(paymentData.partyGroupId || '').trim() === groupId;
+    });
+
+    for (const card of groupCards) {
+        const teamElement = card.querySelector('.p-team-text');
+        const nameElement = card.querySelector('.p-name-text');
+        if (teamElement) teamElement.textContent = team;
+        if (nameElement) nameElement.textContent = name;
+        card.dataset.phone = phone;
+        updateCardView(card);
+        await saveCard(card);
+    }
+}
+
+function enforceGameCashReceiptLimit() {
+    const cashEl = document.getElementById('cashInput');
+    const transferEl = document.getElementById('transferInput');
+    const receiptEl = document.getElementById('cashReceiptInput');
+    if (!receiptEl) return 0;
+
+    const cash = Math.max(parseInt(cashEl?.value, 10) || 0, 0);
+    const transfer = Math.max(parseInt(transferEl?.value, 10) || 0, 0);
+    const limit = cash + transfer;
+    let receipt = Math.max(parseInt(receiptEl.value, 10) || 0, 0);
+    receiptEl.max = String(limit);
+    if (receipt > limit) {
+        receipt = limit;
+        receiptEl.value = limit ? String(limit) : '';
+    }
+    return receipt;
+}
+
+window.enforceGameCashReceiptLimit = enforceGameCashReceiptLimit;
+
 function checkPaymentMatch() {
     if (hasPeopleInputMismatch()) return false;
 
@@ -7187,6 +7631,7 @@ function checkPaymentMatch() {
 }
 
 async function savePaymentInfo(closeAfterSave = true) {
+    enforceGameCashReceiptLimit();
     const totalPeople = parseInt(document.getElementById("totalPeople").value) || 0;
     const adultCount = parseInt(document.getElementById("adultCount").value) || 0;
     const childCount = parseInt(document.getElementById("childCount").value) || 0;
@@ -7205,6 +7650,10 @@ async function savePaymentInfo(closeAfterSave = true) {
     const cardInput = parseInt(document.getElementById("cardInput").value) || 0;
     const cashInput = parseInt(document.getElementById("cashInput").value) || 0;
     const transferInput = parseInt(document.getElementById("transferInput").value) || 0;
+    const cashReceiptInput = Math.max(
+        parseInt(document.getElementById("cashReceiptInput")?.value, 10) || 0,
+        0
+    );
 
     let basePaymentData = null;
     if (currentPaymentCard) {
@@ -7270,6 +7719,7 @@ async function savePaymentInfo(closeAfterSave = true) {
         cardInput,
         transferInput,
         cashInput,
+        cashReceiptInput,
         baseAmount,
         finalPaymentAmount: displayedFinalPaymentAmount,
         isMatching: !peopleMismatch && isMatchingPayment
@@ -7278,6 +7728,10 @@ async function savePaymentInfo(closeAfterSave = true) {
     if (basePaymentData?.copyGroupId && Number.isFinite(parseInt(basePaymentData?.copySeq, 10))) {
         paymentData.copyGroupId = String(basePaymentData.copyGroupId);
         paymentData.copySeq = parseInt(basePaymentData.copySeq, 10);
+    }
+    if (basePaymentData?.partyGroupId) {
+        paymentData.partyGroupId = String(basePaymentData.partyGroupId);
+        paymentData.partyGroupSeq = parseInt(basePaymentData.partyGroupSeq, 10) || 0;
     }
 
     if (basePaymentData?.reservationConflict) {
@@ -7314,6 +7768,8 @@ async function savePaymentInfo(closeAfterSave = true) {
             // 새 빈 카드도 서버 저장이 끝나서 ID를 받은 뒤에만 모달을 닫습니다.
             // 그렇지 않으면 닫는 순간 임시 카드가 화면에서 제거되어 새로고침 전까지 보이지 않습니다.
             await saveCard(currentPaymentCard);
+
+            await syncPartyRoomGroupIdentity(currentPaymentCard);
             
             // 팀카드 배지 업데이트 (모달 배지 상태 반영)
             setTeamCardBookerBadge(currentPaymentCard, isBooker, reservationTime);
