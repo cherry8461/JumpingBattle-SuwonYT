@@ -202,11 +202,16 @@
                     <span class="price-setting">성인 <input type="number" id="adultPrice" value="6000"></span>
                     <span class="price-setting">학생 <input type="number" id="childPrice" value="4000"></span>
                 </div>
-                <button id="view-all-btn" onclick="toggleViewAll()">전체보기</button>
+                <div class="checkpoint-filter-container">
+                    <select id="checkpoint-select" onchange="onCheckpointSelectionChanged()" aria-label="시간별 체크포인트">
+                        <option value="">현재 데이터</option>
+                    </select>
+                    <button type="button" id="checkpoint-test-save-btn" onclick="saveTestCheckpoint(this)">테스트 저장</button>
+                </div>
                 <div class="date-filter-container">
                     <label for="dashboard-date">조회 날짜</label>
                     <div class="date-input-group">
-                        <input type="date" id="dashboard-date" onchange="loadBookings()">
+                        <input type="date" id="dashboard-date" onchange="handleDashboardDateChange()">
                         <button type="button" class="btn-today-shortcut" onclick="setToToday()">오늘</button>
                     </div>
                 </div>
@@ -266,7 +271,33 @@
                 </div>
             </div>
 
-            <table class="special-pay-table">
+            <table class="special-pay-table special-adjustment-table">
+                <colgroup>
+                    <col class="special-pay-col-item">
+                    <col class="special-pay-col-amount">
+                    <col class="special-pay-col-amount">
+                    <col class="special-pay-col-amount">
+                </colgroup>
+                <tbody>
+                    <tr class="row-theme-violet supply-adjustment-table-row">
+                        <td class="special-pay-item supply-expense-section">
+                            <div class="etc-item-wrap supply-expense-wrap">
+                                <span>현금지출</span>
+                                <input type="text" id="spCashExpenseText" class="etc-item-text" maxlength="30" placeholder="지출 내용">
+                            </div>
+                        </td>
+                        <td class="supply-adjustment-amount-cell supply-expense-amount">
+                            <input type="text" id="spCashExpense" class="currency-input" inputmode="numeric" placeholder="금액" oninput="formatCurrencyInput(this)">
+                        </td>
+                        <td class="supply-cash-receipt-label supply-receipt-section">현금영수증</td>
+                        <td class="supply-adjustment-amount-cell supply-receipt-amount">
+                            <input type="text" id="spCashReceipt" class="currency-input" inputmode="numeric" placeholder="금액" oninput="formatCurrencyInput(this)">
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <table class="special-pay-table special-sales-entry-table">
                 <thead>
                     <tr>
                         <th class="special-pay-col-item">항목</th>
@@ -298,21 +329,6 @@
                         <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcCash" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
                         <td><input type="text" class="currency-input" inputmode="numeric" id="spEtcTransfer" placeholder="금액" oninput="formatCurrencyInput(this); updateSupplyTotals()"></td>
                     </tr>
-                    <tr class="row-theme-violet supply-adjustment-table-row">
-                        <td class="special-pay-item">
-                            <div class="etc-item-wrap supply-expense-wrap">
-                                <span>현금지출</span>
-                                <input type="text" id="spCashExpenseText" class="etc-item-text" maxlength="30" placeholder="지출 내용">
-                            </div>
-                        </td>
-                        <td class="supply-adjustment-amount-cell">
-                            <input type="text" id="spCashExpense" class="currency-input" inputmode="numeric" placeholder="금액" oninput="formatCurrencyInput(this)">
-                        </td>
-                        <td class="supply-cash-receipt-label">현금영수증</td>
-                        <td class="supply-adjustment-amount-cell">
-                            <input type="text" id="spCashReceipt" class="currency-input" inputmode="numeric" placeholder="금액" oninput="formatCurrencyInput(this)">
-                        </td>
-                    </tr>
                 </tbody>
             </table>
 
@@ -329,27 +345,25 @@
                     <tbody id="supplyTableBodyCol1"></tbody>
                 </table>
 
-                <table class="supply-table supply-table-compact">
-                    <thead>
-                        <tr>
-                            <th class="supply-col-item">항목</th>
-                            <th class="supply-col-pay">카드</th>
-                            <th class="supply-col-pay">현금</th>
-                            <th class="supply-col-pay">계좌</th>
-                        </tr>
-                    </thead>
-                    <tbody id="supplyTableBodyCol2"></tbody>
-                    <tfoot>
-                        <tr>
-                            <td colspan="4" class="supply-input-footer">
-                                <div class="supply-footer-row">
-                                    <span class="supply-footer-sum">합계: <span id="supplyFooterTotal">0</span>원</span>
-                                    <button class="supply-apply-btn" onclick="applySupplyInputs()">입력</button>
-                                </div>
-                            </td>
-                        </tr>
-                    </tfoot>
-                </table>
+                <div class="supply-table-stack">
+                    <table class="supply-table supply-table-compact">
+                        <thead>
+                            <tr>
+                                <th class="supply-col-item">항목</th>
+                                <th class="supply-col-pay">카드</th>
+                                <th class="supply-col-pay">현금</th>
+                                <th class="supply-col-pay">계좌</th>
+                            </tr>
+                        </thead>
+                        <tbody id="supplyTableBodyCol2"></tbody>
+                    </table>
+                    <div class="supply-input-footer">
+                        <div class="supply-footer-row">
+                            <span class="supply-footer-sum">합계: <span id="supplyFooterTotal">0</span>원</span>
+                            <button class="supply-apply-btn" onclick="applySupplyInputs()">입력</button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="supply-history">
@@ -578,6 +592,6 @@
 <script src="{{ url_for('static', filename='js/settle_core.js') }} " ></script>
 <script src="{{ url_for('static', filename='js/settlement.js') }}"></script>
 <script src="{{ url_for('static', filename='js/google_sheets.js') }}" ></script>      
-<script src="{{ url_for('static', filename='js/dashboard.js', v='party-group-20260917-02') }}" ></script>
+<script src="{{ url_for('static', filename='js/dashboard.js', v='walkin-placement-grace-20260923-01') }}" ></script>
 </body>
 </html>

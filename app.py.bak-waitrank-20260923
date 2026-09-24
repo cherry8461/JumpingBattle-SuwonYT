@@ -1503,7 +1503,6 @@ def parse_log_line(line: str):
             pad_data[pad_id].update(MAP_INFO[map_id])
 
         pad_status[pad_id] = "playing"
-        pad_wait_rank_since[pad_id] = None
 
         started_at_match = TIME_PATTERN.search(line)
         if started_at_match:
@@ -1541,7 +1540,6 @@ def parse_log_line(line: str):
         pad_id = int(m.group(1))
 
         pad_status[pad_id] = "wait_rank"
-        pad_wait_rank_since[pad_id] = time.monotonic()
         pad_data[pad_id]["score"] = None
 
         t = TIME_PATTERN.search(line)
@@ -1606,7 +1604,6 @@ def parse_log_line(line: str):
         save_to_db(pad_data[pad_id])
 
         pad_status[pad_id] = "off"
-        pad_wait_rank_since[pad_id] = None
 
         print(
             f"✅ SAVE | {PAD_MAP[pad_id]} | "
@@ -1628,7 +1625,6 @@ def parse_log_line(line: str):
         if waiting_pads:
             pad_id = waiting_pads[0]
             pad_status[pad_id] = "off"
-            pad_wait_rank_since[pad_id] = None
 
             print(f"🚫 RANK SKIP | {PAD_MAP[pad_id]}")
         return True
@@ -1678,31 +1674,6 @@ def init_pad_data(pad_id):
     }
 
 pad_data = {i: init_pad_data(i) for i in range(PAD_COUNT)}
-
-# 정상적인 랭킹 결과는 STOP 직후 거의 즉시 도착합니다. 다만 이미 처리된
-# 게임에서 중복 STOP만 들어오면 후속 랭킹/RANK SKIP이 없어 wait_rank가
-# 영구 유지될 수 있으므로, 짧은 유예 후 표시 상태만 안전하게 해제합니다.
-RANK_WAIT_TIMEOUT_SECONDS = 10.0
-pad_wait_rank_since = {i: None for i in range(PAD_COUNT)}
-
-
-def expire_stale_rank_waits():
-    now = time.monotonic()
-    for pad_id, status in list(pad_status.items()):
-        started_at = pad_wait_rank_since.get(pad_id)
-        if (
-            status == "wait_rank"
-            and started_at is not None
-            and now - started_at >= RANK_WAIT_TIMEOUT_SECONDS
-        ):
-            elapsed = now - started_at
-            pad_status[pad_id] = "off"
-            pad_wait_rank_since[pad_id] = None
-            room = PAD_MAP.get(pad_id, str(pad_id))
-            print(
-                f"RANK WAIT TIMEOUT | {room} | "
-                f"no rank result after {elapsed:.1f}s; status cleared"
-            )
 
 # ========================================================
 # 정규식
@@ -4580,7 +4551,6 @@ def get_pad_status():
     대시보드에서 방 상태(룸 카드)를 표시하기 위한 API
     현재 게임 상태, 팀 정보, 시간 등을 반환합니다.
     """
-    expire_stale_rank_waits()
     manager_states = {}
     conn = get_db_connection(timeout=3)
     conn.row_factory = sqlite3.Row

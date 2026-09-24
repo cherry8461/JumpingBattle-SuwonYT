@@ -36,6 +36,8 @@ window.addEventListener('DOMContentLoaded', () => {
 const ADMIN_PASSWORD = "4357";
 const STAFF_VIEW_PASSWORD = "0308";
 let lastValidSelectedDate = new Date().toISOString().split('T')[0];
+let activeCheckpointId = null;
+let checkpointCaptureTimer = null;
 
 // Walk-in 관련 기능은 그대로 유지합니다.
 let previousWalkInIds = new Set();
@@ -71,34 +73,6 @@ alertSound.volume = 1;
     }
 })();
 
-function toggleViewAll() {
-    const body = document.body;
-    const btn = document.getElementById('view-all-btn');
-    const container = document.querySelector('.timeline-container');
-    
-    const isViewAll = body.classList.toggle('view-all-mode');
-    btn.innerText = isViewAll ? '일반보기' : '전체보기';
-
-    if (isViewAll) {
-        initSchedule(10, 23, 60);
-        if (container) container.style.pointerEvents = 'none'; // 6) 리드온리
-    } else {
-        initSchedule(10, 23, 20); // 기존 소스 기준 10시 시작
-        if (container) container.style.pointerEvents = 'auto';
-    }
-
-    if (typeof loadBookings === 'function') {
-        loadBookings(); 
-    }
-    if (isViewAll) {
-        const container = document.querySelector('.timeline-container');
-        if (container) container.scrollTop = 0;
-    }
-    if (typeof updateCurrentTimeGridLine === 'function') {
-        updateCurrentTimeGridLine();
-    }
-}
-
 function setToToday() {
     const dateInput = document.getElementById('dashboard-date');
     if (!dateInput) return;
@@ -116,7 +90,7 @@ function setToToday() {
     
     // 매장 예약 로드 함수 실행
     if (typeof loadBookings === 'function') {
-        loadBookings();
+        handleDashboardDateChange();
     }
 }
 
@@ -292,7 +266,7 @@ async function refreshWalkInList() {
                     adultCount,
                     childCount,
                     roomSize: item.room_size || item.room || '',
-                    roomFast: !!item.room_fast,
+                    roomFast: normalizeWalkInFastFlag(item.room_fast),
                     partyRoom: isPartyRoomBooking,
                     partyConcept: item.party_concept || '',
                     partyPeople: item.party_people || '',
@@ -311,7 +285,35 @@ async function refreshWalkInList() {
             let displayName = item.name;
             let peopleCount = item.people ? `${item.people}명` : '-';
             let roomSize = item.room_size || item.room || '방미정';
-            let levelName = (item.level && onsetMap[item.level]) ? onsetMap[item.level] : (item.level || '-');
+            let levelName = normalizeLevelShortcut(item.difficulty || item.level || '') || '-';
+            const roomSizeKey = String(roomSize).includes('소') ? 'small'
+                : String(roomSize).includes('중') ? 'medium'
+                : String(roomSize).includes('대') ? 'large'
+                : 'unknown';
+            const rawLevelKey = String(levelName || '').trim().toLowerCase();
+            const levelBadgeKey = rawLevelKey.includes('basic') || rawLevelKey.includes('베이직') ? 'basic'
+                : rawLevelKey.includes('easy') || rawLevelKey.includes('이지') ? 'easy'
+                : rawLevelKey.includes('normal') || rawLevelKey.includes('노멀') ? 'normal'
+                : rawLevelKey.includes('challenger') || rawLevelKey.includes('챌린저') ? 'challenger'
+                : rawLevelKey.includes('hard') || rawLevelKey.includes('하드') ? 'hard'
+                : rawLevelKey.includes('kids') || rawLevelKey.includes('키즈') || rawLevelKey.includes('유아') ? 'kids'
+                : rawLevelKey.includes('summer') || rawLevelKey.includes('여름') ? 'summer'
+                : rawLevelKey.includes('space') || rawLevelKey.includes('우주') ? 'space'
+                : rawLevelKey.includes('santa') || rawLevelKey.includes('산타') ? 'santa'
+                : 'unknown';
+            const levelBadgeColors = {
+                basic: ['#fd8a69', '#ef6e4a', '#2b1b14'],
+                easy: ['#fd9f28', '#e88812', '#2b1b14'],
+                normal: ['#2fa599', '#23877d', '#ffffff'],
+                hard: ['#2e3d86', '#202d70', '#ffffff'],
+                challenger: ['#541d7a', '#3f115f', '#ffffff'],
+                kids: ['#ffcd4a', '#e7b62f', '#3b2f00'],
+                summer: ['#18a8f1', '#0789ca', '#ffffff'],
+                space: ['#5d6dbe', '#4656a4', '#ffffff'],
+                santa: ['#ff1803', '#d91402', '#ffffff'],
+                unknown: ['#e2e8f0', '#cbd5e1', '#475569']
+            };
+            const [levelBackground, levelBorder, levelColor] = levelBadgeColors[levelBadgeKey];
             
             card.innerHTML = `
                 <div class="info">
@@ -319,9 +321,8 @@ async function refreshWalkInList() {
                     <span>|</span>
                     <span>${displayName}</span>
                     <span style="color: #fd6f22; font-weight: 700;">${peopleCount}</span>
-                    <span style="background: #f1f5f9; color: #334155; padding: 1px 5px; border-radius: 3px; font-size: 11px;">${roomSize}</span>
-                    ${item.room_fast ? '<span class="fast-badge" style="margin-left: 0;">fast</span>' : ''}
-                    <span style="background: #dbeafe; color: #1d4ed8; padding: 1px 5px; border-radius: 3px; font-size: 11px;">${levelName}</span>
+                    <span class="waiting-size-badge waiting-size-${roomSizeKey}">${normalizeWalkInFastFlag(item.room_fast) ? '<b class="waiting-fast-prefix">F</b>' : ''}${roomSize}</span>
+                    <span class="waiting-level-badge waiting-level-${levelBadgeKey}" style="background:${levelBackground}; border-color:${levelBorder}; color:${levelColor};">${levelName}</span>
                 </div>
                 <button class="action-btn">입력</button>
             `;
@@ -439,7 +440,18 @@ async function refreshWalkInList() {
 function getWalkInCurrentTimeKey() {
     const now = new Date();
     let hour = now.getHours();
-    let minute = Math.floor(now.getMinutes() / 20) * 20;
+    const currentMinute = now.getMinutes();
+    let minute = 0;
+
+    // 20-minute timetable placement uses a five-minute grace window.
+    // 00-15 -> :00, 16-35 -> :20, 36-55 -> :40, 56-59 -> next :00.
+    if (currentMinute <= 15) minute = 0;
+    else if (currentMinute <= 35) minute = 20;
+    else if (currentMinute <= 55) minute = 40;
+    else {
+        hour += 1;
+        minute = 0;
+    }
 
     if (hour < 10) return '10-0';
     if (hour > 22 || (hour === 22 && minute > 20)) return '22-20';
@@ -736,10 +748,14 @@ function getActiveCardsForRoom(room) {
         cell.querySelectorAll('.booking-card').forEach(card => {
             const isCompleted = card.querySelector('.p-completed')?.checked;
             const isManualNaverBlock = card.dataset.manualNaverBlock === 'true';
+            const isGameRunning = card.dataset.gameRunning === 'true';
             // A staff-created Naver close occupies its timetable cell, but it
             // is not a customer waiting to play and must never receive ETA
             // / entry / finish labels or affect another team's queue time.
-            if (!isCompleted && !isManualNaverBlock) cards.push(card);
+            // A running card has already entered the room. Keeping it in this
+            // list would show "immediate entry" again and would also push the
+            // next waiting team's ETA back by another full game.
+            if (!isCompleted && !isManualNaverBlock && !isGameRunning) cards.push(card);
         });
     });
     return cards;
@@ -1034,28 +1050,136 @@ function hasBookingAtTimeKey(room, timeKey) {
     return cell.querySelectorAll('.booking-card').length > 0;
 }
 
-function pickRoomByWalkInSize(roomSize, timeKey) {
-    const normalized = String(roomSize || '').trim();
-    const candidates = normalized === '소형' ? ['C1', 'C2'] : ['B1', 'B2'];
+// 워크인 자동 배정은 서버에서 불러온 숨김 room-queue가 아니라
+// 현재 화면의 타임테이블에 실제로 남아 있는 대기 카드만 기준으로 삼는다.
+// 숨김 room-queue에는 이미 입력된 과거 항목이 남을 수 있어 C1/C2 선택이
+// 실제 화면과 반대로 계산되는 문제가 있었다.
+function getWalkInPendingCardsForRoom(room) {
+    return getActiveCardsForRoom(room);
+}
 
-    const emptyAtTargetTime = candidates.filter((room) => !hasBookingAtTimeKey(room, timeKey));
-    const targetRooms = emptyAtTargetTime.length > 0 ? emptyAtTargetTime : candidates;
+function getWalkInPendingTailComparableMinute(room, pendingCards) {
+    const cards = Array.isArray(pendingCards) ? pendingCards : getWalkInPendingCardsForRoom(room);
+    const estimates = getQueueEntryEstimateTimes(room, cards);
+
+    if (estimates.length > 0) {
+        return hhmmToComparableMinute(estimates[estimates.length - 1]);
+    }
+
+    const firstAvailable = getQueueEntryEstimateTimes(room, [{}])[0];
+    return hhmmToComparableMinute(firstAvailable);
+}
+
+// 워크인 방 자동 배정 시 같은 시간 칸에 이미 들어간 "현재 점유 카드" 수를 센다.
+// queue-item-manual만 세던 기존 비교에서는 첫 카드가 타임테이블로 이동한 직후에도
+// 해당 방이 빈 방으로 평가되어, 연속 입력한 팀이 같은 방/시간에 겹칠 수 있었다.
+function getActiveBookingCountAtTimeKey(room, timeKey) {
+    const cell = document.getElementById(`cell-${timeKey}-${room}`);
+    if (!cell) return 0;
+
+    return Array.from(cell.querySelectorAll('.booking-card')).filter((card) => {
+        const isCompleted = !!card.querySelector('.p-completed')?.checked;
+        return !isCompleted;
+    }).length;
+}
+
+function normalizeWalkInFastFlag(value) {
+    if (value === true || value === 1) return true;
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(normalized);
+}
+
+function normalizeWalkInRoomSize(value) {
+    const normalized = String(value || '').trim();
+    if (normalized.includes('소형')) return '소형';
+    if (normalized.includes('대형')) return '대형';
+    return '중형';
+}
+
+function pickRoomByWalkInSizeLegacy(roomSize, timeKey, isFast = false) {
+    const normalized = normalizeWalkInRoomSize(roomSize);
+    const fastRoom = normalizeWalkInFastFlag(isFast);
+    const requestedRooms = normalized === '소형' ? ['C1', 'C2'] : ['B1', 'B2'];
+    const otherRooms = normalized === '소형' ? ['B1', 'B2'] : ['C1', 'C2'];
+    const candidates = [...requestedRooms, ...otherRooms];
+    const preferredRoomOrder = new Map(candidates.map((room, index) => [room, index]));
+
+    // 방 선택은 타임테이블 칸에 카드가 남아 있는지만으로 제외하지 않는다.
+    // 이미 시작했거나 완료된 카드도 같은 20분 칸에 남을 수 있어 실제 대기가 없는
+    // B1/C1이 후보에서 빠지고 B2/C2가 선택되는 문제가 있었다. 실제 게임 상태,
+    // 대기열 및 다음 예약 충돌을 아래 비교에서 판단한다.
+    const targetRooms = fastRoom ? candidates : requestedRooms;
     const now = new Date();
     const graceMinutes = getReservationGraceMinutes();
 
-    const withConflictInfo = targetRooms.map((room) => ({
-        room,
-        conflict: evaluateWalkInReservationConflict(room, timeKey, now, graceMinutes),
-        queueTailMinute: getRoomLastQueueEntryComparableMinute(room),
-        queueCount: getQueueCountForRoom(room),
-    }));
+    // Capture all four rooms at the exact moment the operator presses input.
+    // Selection still uses targetRooms below, so this diagnostic does not
+    // alter the room assignment rule.
+    const allRoomInfo = ['C1', 'C2', 'B1', 'B2'].map((room) => {
+        const pendingCards = getWalkInPendingCardsForRoom(room);
+        return {
+            room,
+            conflict: evaluateWalkInReservationConflict(room, timeKey, now, graceMinutes),
+            targetSlotCount: getActiveBookingCountAtTimeKey(room, timeKey),
+            queueTailMinute: getWalkInPendingTailComparableMinute(room, pendingCards),
+            queueCount: pendingCards.length,
+            isPlaying: !!document.getElementById(`room-card-${room}`)?.classList.contains('playing'),
+        };
+    });
+    const withConflictInfo = allRoomInfo.filter((item) => targetRooms.includes(item.room));
 
-    const nonConflict = withConflictInfo.filter((it) => !it.conflict.hasConflict);
-    const pool = nonConflict.length > 0 ? nonConflict : withConflictInfo;
+    const logRoomSelection = (selected, reason) => {
+        const selectedRoom = selected?.room || '-';
+        const tableRows = allRoomInfo.map((item) => ({
+            방: item.room,
+            '신청 대상': requestedRooms.includes(item.room) ? '예' : '아니오',
+            게임중: item.isPlaying ? '예' : '아니오',
+            '해당 시간 카드': item.targetSlotCount,
+            '대기 카드': item.queueCount,
+            '대기 종료 계산값': Number.isFinite(item.queueTailMinute) ? item.queueTailMinute : '-',
+            '예약 충돌': item.conflict?.hasConflict ? '있음' : '없음',
+            선택: item.room === selectedRoom ? '선택' : '',
+        }));
 
-    pool.sort((a, b) => {
-        const delayDiff = (a.conflict.delayMinutes || 0) - (b.conflict.delayMinutes || 0);
-        if (delayDiff !== 0) return delayDiff;
+        console.group(`[워크인 방 계산] 신청=${normalized}${fastRoom ? ' / 빠른방' : ''} · 시간=${timeKey} · 선택=${selectedRoom}`);
+        console.table(tableRows);
+        console.info('계산 조건', {
+            입력방크기: roomSize,
+            정규화방크기: normalized,
+            빠른방: fastRoom,
+            입력시간: timeKey,
+            신청대상방: requestedRooms,
+            최종선택방: selectedRoom,
+            선택이유: reason,
+        });
+        console.info('네 방 원본 계산값', allRoomInfo);
+        console.groupEnd();
+    };
+
+    const roomInfo = (room) => withConflictInfo.find((item) => item.room === room) || null;
+    const isCompletelyIdle = (info) => !!info
+        && !info.isPlaying
+        && info.targetSlotCount === 0
+        && info.queueCount === 0;
+
+    // 같은 크기의 두 방이 모두 완전히 비어 있으면 간접 예상시간 계산을 사용하지 않는다.
+    // 예상시간은 각각 Date를 새로 읽어 수 밀리초 차이로 두 번째 방이 선택될 수 있으므로,
+    // 소형은 C1, 중/대형은 B1이라는 운영 기본 우선순위를 확정한다.
+    const requestedFirst = roomInfo(requestedRooms[0]);
+    const requestedSecond = roomInfo(requestedRooms[1]);
+    if (isCompletelyIdle(requestedFirst) && isCompletelyIdle(requestedSecond)) {
+        logRoomSelection(requestedFirst, '같은 크기 두 방이 모두 비어 있어 기본방 우선');
+        return requestedFirst;
+    }
+
+    const compareRooms = (a, b) => {
+        // 실제 게임중 여부를 예상시간보다 먼저 비교한다.
+        if (a.isPlaying !== b.isPlaying) return a.isPlaying ? 1 : -1;
+
+        // 같은 타임에 먼저 입력된 카드가 있는 방보다 빈 형제 방을 우선한다.
+        // 카드 생성은 동기적으로 DOM에 반영되므로 연속 입력에도 즉시 적용된다.
+        const slotDiff = a.targetSlotCount - b.targetSlotCount;
+        if (slotDiff !== 0) return slotDiff;
 
         const timeDiff = a.queueTailMinute - b.queueTailMinute;
         if (timeDiff !== 0) return timeDiff;
@@ -1063,16 +1187,181 @@ function pickRoomByWalkInSize(roomSize, timeKey) {
         const queueDiff = a.queueCount - b.queueCount;
         if (queueDiff !== 0) return queueDiff;
 
-        return a.room.localeCompare(b.room);
+        // If every wait condition is tied, prefer C1 for small rooms and B1 for medium/large rooms.
+        return (preferredRoomOrder.get(a.room) ?? Number.MAX_SAFE_INTEGER)
+            - (preferredRoomOrder.get(b.room) ?? Number.MAX_SAFE_INTEGER);
+    };
+
+    const bestInGroup = (rooms) => {
+        const group = withConflictInfo.filter((item) => rooms.includes(item.room));
+        // 충돌 예상 방을 후보에서 제거하지 않는다. 현재 대기가 더 짧거나 방이 비었다면
+        // 그 방을 먼저 배정하고, 충돌 여부는 경고/표시에만 사용한다.
+        return [...group].sort(compareRooms)[0] || null;
+    };
+
+    const requestedBest = bestInGroup(requestedRooms);
+    if (!fastRoom) {
+        const selected = requestedBest || { room: requestedRooms[0], conflict: null };
+        logRoomSelection(selected, '신청한 크기의 두 방 비교');
+        return selected;
+    }
+
+    // 빠른방은 각 크기 그룹의 최선 방끼리만 비교한다. 완전히 같으면 고객이
+    // 신청한 크기를 유지하므로 중형은 B1, 소형은 C1이 기본방이 된다.
+    const otherBest = bestInGroup(otherRooms);
+    const selected = !otherBest || (requestedBest && compareRooms(requestedBest, otherBest) <= 0)
+        ? requestedBest
+        : otherBest;
+
+    const resolved = selected || { room: targetRooms[0] || candidates[0], conflict: null };
+    logRoomSelection(resolved, '빠른방 조건으로 네 방 비교');
+    return resolved;
+}
+
+function walkInTimeKeyToMinute(timeKey) {
+    const parts = parseTimeKeyParts(timeKey);
+    return parts ? (parts.hour * 60) + parts.minute : null;
+}
+
+function walkInMinuteToTimeKey(totalMinute) {
+    const minMinute = 10 * 60;
+    const maxMinute = (22 * 60) + 20;
+    const bounded = Math.max(minMinute, Math.min(maxMinute, Math.round(totalMinute)));
+    return `${Math.floor(bounded / 60)}-${bounded % 60}`;
+}
+
+function walkInCeilToSlotMinute(totalMinute) {
+    return Math.ceil(totalMinute / 20) * 20;
+}
+
+function walkInExtractClockMinute(text, fallback = null) {
+    const match = String(text || '').match(/(\d{1,2}):(\d{2})/);
+    if (!match) return fallback;
+    return (Number(match[1]) * 60) + Number(match[2]);
+}
+
+function getWalkInCardInterval(card, room) {
+    const cell = card?.closest?.('.time-slot-cell, [id^="cell-"]');
+    const idMatch = String(cell?.id || '').match(/^cell-(\d+)-(\d+)-([A-Z]\d+)$/);
+    if (!idMatch || idMatch[3] !== room) return null;
+
+    const slotMinute = (Number(idMatch[1]) * 60) + Number(idMatch[2]);
+    const entryText = card.querySelector('.type-entry')?.textContent || '';
+    const endText = card.querySelector('.type-end')?.textContent || '';
+    let startMinute = walkInExtractClockMinute(entryText, slotMinute);
+    let endMinute = walkInExtractClockMinute(endText, startMinute + WALKIN_GAME_DURATION_MIN);
+    if (endMinute < startMinute) endMinute += 24 * 60;
+
+    return { card, room, timeKey: `${idMatch[1]}-${idMatch[2]}`, slotMinute, startMinute, endMinute };
+}
+
+function getWalkInRoomIntervals(room) {
+    return Array.from(document.querySelectorAll('.booking-card'))
+        .filter((card) => !card.classList.contains('completed'))
+        .map((card) => getWalkInCardInterval(card, room))
+        .filter(Boolean)
+        .sort((a, b) => a.startMinute - b.startMinute || a.endMinute - b.endMinute);
+}
+
+function simulateWalkInPlacement(room, baseTimeKey) {
+    const baseMinute = walkInTimeKeyToMinute(baseTimeKey);
+    if (!Number.isFinite(baseMinute)) return null;
+
+    const now = new Date();
+    const nowMinute = (now.getHours() * 60) + now.getMinutes();
+    const intervals = getWalkInRoomIntervals(room);
+    let slotMinute = baseMinute;
+
+    for (let attempt = 0; attempt < 80 && slotMinute <= (22 * 60) + 20; attempt += 1) {
+        let entryMinute = Math.max(nowMinute, slotMinute);
+
+        // Cards that started before this walk-in determine the first real entry time.
+        const priorCards = intervals.filter((item) => item.startMinute <= entryMinute && item.endMinute > entryMinute);
+        if (priorCards.length) entryMinute = Math.max(entryMinute, ...priorCards.map((item) => item.endMinute));
+
+        // A card may stay in its displayed slot when the preceding game ends
+        // within five minutes of that slot. Beyond that, move to the next slot.
+        if (entryMinute > slotMinute + 5) {
+            slotMinute = walkInCeilToSlotMinute(entryMinute);
+            continue;
+        }
+
+        const finishMinute = entryMinute + WALKIN_GAME_DURATION_MIN;
+        const nextBooking = intervals.find((item) => item.startMinute > entryMinute);
+        if (nextBooking && finishMinute > nextBooking.startMinute + 5) {
+            slotMinute = walkInCeilToSlotMinute(Math.max(nextBooking.endMinute, slotMinute + 20));
+            continue;
+        }
+
+        const delayMinutes = nextBooking ? Math.max(0, finishMinute - nextBooking.startMinute) : 0;
+        const conflict = nextBooking && delayMinutes > 0 ? {
+            hasConflict: true,
+            delayMinutes,
+            nextBooking: { card: nextBooking.card, timeKey: nextBooking.timeKey },
+            expectedEnd: null,
+            latestAllowed: null,
+        } : { hasConflict: false, delayMinutes: 0, nextBooking: null };
+
+        return {
+            room,
+            timeKey: walkInMinuteToTimeKey(slotMinute),
+            entryMinute,
+            finishMinute,
+            conflict,
+            intervals,
+        };
+    }
+
+    return null;
+}
+
+function pickRoomByWalkInSize(roomSize, timeKey, isFast = false) {
+    const normalized = normalizeWalkInRoomSize(roomSize);
+    const fastRoom = normalizeWalkInFastFlag(isFast);
+    const requestedRooms = normalized === '\uC18C\uD615' ? ['C1', 'C2'] : ['B1', 'B2'];
+    const otherRooms = normalized === '\uC18C\uD615' ? ['B1', 'B2'] : ['C1', 'C2'];
+    const roomOrder = ['C1', 'C2', 'B1', 'B2'];
+    const targetRooms = fastRoom ? [...requestedRooms, ...otherRooms] : requestedRooms;
+    const results = targetRooms.map((room) => simulateWalkInPlacement(room, timeKey)).filter(Boolean);
+
+    results.sort((a, b) => {
+        const finishDiff = a.finishMinute - b.finishMinute;
+        if (finishDiff !== 0) return finishDiff;
+        if (fastRoom) {
+            const requestedDiff = Number(!requestedRooms.includes(a.room)) - Number(!requestedRooms.includes(b.room));
+            if (requestedDiff !== 0) return requestedDiff;
+        }
+        return roomOrder.indexOf(a.room) - roomOrder.indexOf(b.room);
     });
 
-    const selected = pool[0] || null;
-    return selected || { room: targetRooms[0] || candidates[0], conflict: null };
+    const selected = results[0] || {
+        room: requestedRooms[0],
+        timeKey,
+        entryMinute: walkInTimeKeyToMinute(timeKey),
+        finishMinute: walkInTimeKeyToMinute(timeKey) + WALKIN_GAME_DURATION_MIN,
+        conflict: null,
+    };
+
+    console.group(`[walk-in placement] requested=${normalized}${fastRoom ? ' / fast' : ''} base=${timeKey} selected=${selected.room}@${selected.timeKey}`);
+    console.table(['C1', 'C2', 'B1', 'B2'].map((room) => {
+        const result = results.find((item) => item.room === room);
+        return {
+            room,
+            eligible: targetRooms.includes(room),
+            slot: result?.timeKey || '-',
+            entry: Number.isFinite(result?.entryMinute) ? `${Math.floor(result.entryMinute / 60)}:${String(result.entryMinute % 60).padStart(2, '0')}` : '-',
+            finish: Number.isFinite(result?.finishMinute) ? `${Math.floor(result.finishMinute / 60)}:${String(result.finishMinute % 60).padStart(2, '0')}` : '-',
+            reservationDelay: result?.conflict?.delayMinutes || 0,
+            selected: selected.room === room,
+        };
+    }));
+    console.groupEnd();
+    return selected;
 }
 
 function getWalkInRoomFlags(item) {
-    const roomSize = String(item?.room_size || '').trim();
-    const isFast = !!item?.room_fast;
+    const roomSize = normalizeWalkInRoomSize(item?.room_size);
+    const isFast = normalizeWalkInFastFlag(item?.room_fast);
 
     return {
         F: isFast,
@@ -1092,9 +1381,10 @@ async function sendWalkInToTimeline(item) {
     }
 
     const timeKey = getWalkInCurrentTimeKey();
-    const selection = pickRoomByWalkInSize(item.room_size, timeKey);
+    const selection = pickRoomByWalkInSize(item.room_size, timeKey, normalizeWalkInFastFlag(item.room_fast));
     const room = selection.room;
-    const cell = document.getElementById(`cell-${timeKey}-${room}`);
+    const selectedTimeKey = selection.timeKey || timeKey;
+    const cell = document.getElementById(`cell-${selectedTimeKey}-${room}`);
     if (!cell) {
         alert('현재 시간대 셀을 찾을 수 없습니다.');
         return;
@@ -1129,10 +1419,10 @@ async function sendWalkInToTimeline(item) {
     updateCardView(card);
     await saveCard(card);
 
+    recomputeReservationConflictIndicators();
     if (selection.conflict && selection.conflict.hasConflict && selection.conflict.nextBooking?.card) {
         applyReservationConflictNotice(selection.conflict.nextBooking.card, selection.conflict);
     }
-    recomputeReservationConflictIndicators();
 
     try {
         await fetch('/api/walkin/complete', {
@@ -2388,13 +2678,23 @@ async function toggleCardGame(buttonEl) {
         if (isStopping) {
             // Stopping the game does not undo its completed/grey card state.
             setCardGameRunning(card, false);
+            // Reflect the changed queue state before waiting for the server
+            // save, so the entry-time badges never lag behind the button.
+            updateAllTimelineEta();
             await saveCard(card);
         } else {
             // Starting a game changes only the running state. Completion is
             // deliberately handled later by the separate finish button.
             setCardGameRunning(card, true);
+            // The card has already entered the room at this point. Remove its
+            // "immediate entry" badge at once and promote the next waiting
+            // card without waiting for the network save to finish.
+            updateAllTimelineEta();
             await saveCard(card);
         }
+        // Recalculate once more after persistence in case saveCard refreshed
+        // any card data while the request was in flight.
+        updateAllTimelineEta();
         setGameActionButtonState(buttonEl, !isStopping);
         if (!isStopping) {
             // The bridge continuously mirrors the Manager fields. Refresh
@@ -2733,7 +3033,7 @@ function getIntakeDropReplacementCard(targetCell, event) {
 function getIntakeRoomFlags(data, targetRoom) {
     const sourceSize = String(data.roomSize || '').trim();
     if (data.sourceType === 'walkin' && ['소형', '중형', '대형'].includes(sourceSize)) {
-        return { F: !!data.roomFast, S: sourceSize === '소형', M: sourceSize === '중형', L: sourceSize === '대형' };
+        return { F: normalizeWalkInFastFlag(data.roomFast), S: sourceSize === '소형', M: sourceSize === '중형', L: sourceSize === '대형' };
     }
     return {
         F: false,
@@ -4347,11 +4647,10 @@ function getDashboardDateYMD() {
 
 function updateTodayDate() { 
     const now = new Date(); 
-    const year = String(now.getFullYear());
-    const month = String(now.getMonth() + 1).padStart(2, '0'); 
-    const date = String(now.getDate()).padStart(2, '0'); 
-    const week = ['일', '월', '화', '수', '목', '금', '토']; 
-    document.getElementById('currentDate').innerHTML = `<span class="date-value">${year}-${month}-${date}</span> <span class="date-weekday">${week[now.getDay()]}</span>`;
+    const month = now.getMonth() + 1;
+    const date = now.getDate();
+    const week = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+    document.getElementById('currentDate').innerHTML = `<span class="date-value">${month}월 ${date}일</span> <span class="date-weekday">${week[now.getDay()]}</span>`;
 }
 
 function getCurrentDayType() {
@@ -5689,11 +5988,23 @@ function addBookingFromBar() {
 }
 
 const debouncedSave = debounce((card) => saveCard(card), 1500);
+const cardSaveChains = new WeakMap();
+
+function ensureCardClientUid(card) {
+    if (!card.dataset.clientUid) {
+        const generated = (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function')
+            ? globalThis.crypto.randomUUID()
+            : `card-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+        card.dataset.clientUid = generated;
+    }
+    return card.dataset.clientUid;
+}
 
 function createBookingCard() {
     const card = document.createElement('div');
     card.className = 'booking-card';
     card.dataset.bid = '0';
+    ensureCardClientUid(card);
     card.dataset.dragId = `drag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     card.innerHTML = `
@@ -5736,6 +6047,9 @@ function createBookingCard() {
 function addCard(cell, bookingData, bid = 0, isPast = false) {
     const card = createBookingCard();
     card.dataset.bid = bid;
+    if (bookingData && bookingData.client_uid) {
+        card.dataset.clientUid = String(bookingData.client_uid);
+    }
 
     const isViewAll = document.body.classList.contains('view-all-mode');
     
@@ -5989,14 +6303,14 @@ function updateCardView(card) {
     updateCardQueueStatus(card);
 }
 
-async function saveCard(card) {
+async function saveCardOnce(card) {
+    if (!card) return false;
     if (card.dataset.readonly === "true") {
         console.warn("조회 전용 모드이므로 서버에 저장하지 않습니다.");
-        return;
+        return true;
     }
-    if (!card) return;
     const cell = card.closest('td');
-    if (!cell) return;
+    if (!cell) return false;
     const parts = cell.id.split('-');
     const bid = parseInt(card.dataset.bid) || 0;
     const reservationTime = getReservationTimeFromCell(cell);
@@ -6020,6 +6334,7 @@ async function saveCard(card) {
     let orderNo = bid > 0 ? parseInt(card.dataset.orderNo) || getCardOrderNo(card) : getCardOrderNo(card);
     
     const booking = {
+        client_uid: ensureCardClientUid(card),
         booking_date: getDashboardDateYMD(),
         time_key: `${parts[1]}-${parts[2]}`,
         room: parts[3],
@@ -6071,11 +6386,26 @@ async function saveCard(card) {
         updateDashboardSettlementSummary();
         recomputeReservationConflictIndicators();
         updateAllTimelineEta();
+        updateTimelineOverlays();
+        return true;
     } catch(e) {
         console.error('저장 실패:', e);
         card.style.backgroundColor = '#ffcdd2';
+        updateTimelineOverlays();
+        return false;
     }
-    updateTimelineOverlays();
+}
+
+function saveCard(card) {
+    if (!card) return Promise.resolve();
+    const previous = cardSaveChains.get(card) || Promise.resolve();
+    const next = previous.catch(() => {}).then(() => saveCardOnce(card));
+    cardSaveChains.set(card, next);
+    const cleanup = () => {
+        if (cardSaveChains.get(card) === next) cardSaveChains.delete(card);
+    };
+    next.then(cleanup, cleanup);
+    return next;
 }
 
 async function clearCard(card) {
@@ -6084,10 +6414,33 @@ async function clearCard(card) {
         return;
     }
     const removedGroupId = String(card?.dataset?.copyGroupId || '').trim();
+    const pendingSave = cardSaveChains.get(card);
+    if (pendingSave) {
+        try {
+            const saveSucceeded = await pendingSave;
+            if (saveSucceeded === false) {
+                alert('카드 저장이 완료되지 않아 삭제하지 않았습니다. 잠시 후 다시 시도해 주세요.');
+                return;
+            }
+        } catch (e) {
+            console.error('Card save did not finish before delete', e);
+            alert('카드 저장이 완료되지 않아 삭제하지 않았습니다. 잠시 후 다시 시도해 주세요.');
+            return;
+        }
+    }
     const bid = parseInt(card.dataset.bid) || 0;
     if (bid > 0) {
-        try { await fetch(`/api/booking/${bid}`, {method: 'DELETE'}); }
-        catch(e) { console.error('카드 삭제 실패', e); }
+        try {
+            const response = await fetch(`/api/booking/${bid}`, {method: 'DELETE'});
+            if (!response.ok) {
+                const detail = await response.text();
+                throw new Error(detail || `HTTP ${response.status}`);
+            }
+        } catch(e) {
+            console.error('카드 삭제 실패', e);
+            alert('카드를 서버에서 삭제하지 못했습니다. 화면에서도 삭제하지 않았습니다. 다시 시도해 주세요.');
+            return;
+        }
     }
     const cell = card.closest('td');
     card.remove();
@@ -6363,6 +6716,93 @@ function setDayType(type, options = {}) {
     updatePriceDisplay();
 }
 
+async function loadCheckpointOptions() {
+    const select = document.getElementById('checkpoint-select');
+    if (!select) return;
+    const targetDate = getDashboardDateYMD();
+    activeCheckpointId = null;
+    select.innerHTML = '<option value="">현재 데이터</option>';
+    try {
+        const response = await fetch(`/api/dashboard/checkpoints?date=${encodeURIComponent(targetDate)}`);
+        if (!response.ok) return;
+        const checkpoints = await response.json();
+        checkpoints.forEach((checkpoint) => {
+            const option = document.createElement('option');
+            option.value = String(checkpoint.id);
+            option.textContent = `${checkpoint.checkpoint_hour} 저장 (${checkpoint.card_count}개)`;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('체크포인트 목록 로드 실패', error);
+    }
+}
+
+async function handleDashboardDateChange() {
+    activeCheckpointId = null;
+    await loadCheckpointOptions();
+    await loadBookings();
+}
+
+async function onCheckpointSelectionChanged() {
+    const select = document.getElementById('checkpoint-select');
+    activeCheckpointId = select && select.value ? Number(select.value) : null;
+    await loadBookings();
+}
+
+async function captureDashboardCheckpoint() {
+    const today = new Date().toISOString().split('T')[0];
+    const dayType = document.body.dataset.dayType || 'weekday';
+    if (dayType !== 'weekend') return;
+    try {
+        await fetch('/api/dashboard/checkpoints/capture', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_date: today, day_type: dayType })
+        });
+        if (getDashboardDateYMD() === today && !activeCheckpointId) {
+            await loadCheckpointOptions();
+        }
+    } catch (error) {
+        console.error('체크포인트 자동 저장 실패', error);
+    }
+}
+
+async function saveTestCheckpoint(button) {
+    const targetDate = getDashboardDateYMD();
+    const today = new Date().toLocaleDateString('sv-SE');
+    if (targetDate !== today) {
+        showToast('오늘 날짜에서만 테스트 저장할 수 있습니다.', button);
+        return;
+    }
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = '저장 중';
+    try {
+        const response = await fetch('/api/dashboard/checkpoints/capture', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_date: targetDate, test_mode: true })
+        });
+        const result = await response.json();
+        if (!response.ok || result.status !== 'ok') {
+            throw new Error(result.message || '테스트 저장에 실패했습니다.');
+        }
+        await loadCheckpointOptions();
+        showToast(`체크포인트를 저장했습니다. (${result.card_count}개 카드)`, button);
+    } catch (error) {
+        showToast(error.message || '테스트 저장에 실패했습니다.', button);
+    } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+}
+
+function scheduleDashboardCheckpointCapture() {
+    if (checkpointCaptureTimer) clearInterval(checkpointCaptureTimer);
+    captureDashboardCheckpoint();
+    checkpointCaptureTimer = setInterval(captureDashboardCheckpoint, 60 * 60 * 1000);
+}
+
 async function loadBookings() {
     try {
         const targetDate = getDashboardDateYMD();
@@ -6389,12 +6829,10 @@ async function loadBookings() {
 
         lastValidSelectedDate = targetDate;
 
-        const isViewAll = document.body.classList.contains('view-all-mode');
-
         document.querySelectorAll('.booking-card').forEach(card => card.remove());
         const mainWrapper = document.querySelector('.main-wrapper'); 
         if (mainWrapper) {
-            mainWrapper.dataset.readonly = isPast ? "true" : "false";
+            mainWrapper.dataset.readonly = (isPast || Boolean(activeCheckpointId)) ? "true" : "false";
         }
 
         await loadSupplyHistoryFromDB();
@@ -6402,23 +6840,22 @@ async function loadBookings() {
         await loadDashboardCashReceiptAmount();
         await loadDashboardNoShowCount();
 
-        const res = await fetch(`/api/booking/list?date=${encodeURIComponent(targetDate)}`);
+        const endpoint = activeCheckpointId
+            ? `/api/dashboard/checkpoints/${activeCheckpointId}`
+            : `/api/booking/list?date=${encodeURIComponent(targetDate)}`;
+        const res = await fetch(endpoint);
         if (!res.ok) throw new Error('예약 내역 로드 실패');
-        const data = await res.json();
+        const responseData = await res.json();
+        const data = activeCheckpointId ? (responseData.bookings || []) : responseData;
 
         data.forEach(b => {
             const timeParts = String(b.time_key || '').split('-');
             let effectiveTimeKey = timeParts.length >= 2
                 ? `${parseInt(timeParts[0], 10)}-${parseInt(timeParts[1], 10)}`
                 : b.time_key;
-            if (isViewAll) {
-                const hour = String(effectiveTimeKey).split('-')[0];
-                effectiveTimeKey = `${hour}-0`; 
-            }
-
             const cell = document.getElementById(`cell-${effectiveTimeKey}-${b.room}`);
             if (cell) {
-                addCard(cell, b, b.id, isPast); 
+                addCard(cell, b, b.id, isPast || Boolean(activeCheckpointId)); 
             }
         });
 
@@ -6553,6 +6990,8 @@ window.onload = async function() {
     updateTodayDate();
     initReservationGraceMinutes();
     await autoSetDayTypeFromKoreanCalendar();
+    await loadCheckpointOptions();
+    scheduleDashboardCheckpointCapture();
     initTimeSelect();
     startMinuteBoundaryTimer();
     initSchedule(10, 23, 20);

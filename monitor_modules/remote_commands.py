@@ -267,6 +267,38 @@ def create_remote_commands_blueprint(socketio, get_connection):
                     ),
                         )
 
+                        # Enrich only an execution that was already opened
+                        # by an actual Manager GAME START log.  A bridge
+                        # heartbeat must never manufacture a played game.
+                        status_text = str(state.get("status") or "").strip().lower()
+                        try:
+                            remaining_seconds = int(state.get("remainingSeconds") or 0)
+                        except (TypeError, ValueError):
+                            remaining_seconds = 0
+                        if status_text in {"playing", "game", "running", "게임중"} or remaining_seconds > 0:
+                            team_name = str(state.get("teamName") or "").strip()
+                            map_name = str(state.get("mapName") or "").strip()
+                            level = str(state.get("level") or "").strip()
+                            try:
+                                people = int(state.get("people") or 0)
+                            except (TypeError, ValueError):
+                                people = 0
+                            cursor.execute(
+                                """UPDATE game_execution_history
+                                      SET team_name = CASE WHEN ? <> '' THEN ? ELSE team_name END,
+                                          map_name = CASE WHEN ? <> '' THEN ? ELSE map_name END,
+                                          difficulty = CASE WHEN difficulty = '' AND ? <> '' THEN ? ELSE difficulty END,
+                                          people = CASE WHEN ? > 0 THEN ? ELSE people END,
+                                          updated_at = CURRENT_TIMESTAMP
+                                    WHERE id = (
+                                          SELECT id FROM game_execution_history
+                                           WHERE room = ? AND ended_at IS NULL
+                                           ORDER BY started_at DESC LIMIT 1
+                                    )""",
+                                (team_name, team_name, map_name, map_name,
+                                 level, level, people, people, room_id),
+                            )
+
                 if expire_commands:
                     cursor.execute(
                 """UPDATE command_queue SET status='expired', error_message='Command expired'

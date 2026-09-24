@@ -68,6 +68,22 @@ function Invoke-ManagerLoginButton([int]$ProcessId) {
     }
 }
 
+function Test-ManagerLoginButton([int]$ProcessId) {
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $process -or $process.MainWindowHandle -eq 0) { return $false }
+
+    try {
+        $root = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+        $condition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+            'QApplication.MainWindow.centralwidget.widget.ButtonLogin'
+        )
+        return $null -ne $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    } catch {
+        return $false
+    }
+}
+
 function Invoke-ManagerAutoLogin {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
@@ -97,8 +113,9 @@ function Invoke-ManagerAutoLogin {
     $deadline = (Get-Date).AddSeconds(45)
     do {
         $edits = @(Get-ManagerLoginEditControls -ProcessId $ProcessId)
-        # Auto-fill only when the manager login window exposes exactly two edit controls.
-        if ($edits.Count -eq 2 -and $shell.AppActivate($ProcessId)) {
+        # Never type into the post-login dashboard. Some dashboard states also
+        # expose exactly two edit controls, so require the verified login button.
+        if ($edits.Count -eq 2 -and (Test-ManagerLoginButton -ProcessId $ProcessId) -and $shell.AppActivate($ProcessId)) {
             try {
                 $edits[0].SetFocus()
                 Start-Sleep -Milliseconds 150
@@ -109,15 +126,12 @@ function Invoke-ManagerAutoLogin {
                 [System.Windows.Forms.SendKeys]::SendWait('^a')
                 [System.Windows.Forms.SendKeys]::SendWait((ConvertTo-SendKeysLiteral $password))
                 Start-Sleep -Milliseconds 200
-                if (-not (Invoke-ManagerLoginButton -ProcessId $ProcessId)) {
-                    # Some manager versions do not expose the button name to UI Automation.
-                    # Keep Enter as a final fallback only after the password field has focus.
-                    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-                    Write-Host 'Manager credentials were entered; login was requested with the keyboard fallback.' -ForegroundColor Yellow
-                } else {
+                if (Invoke-ManagerLoginButton -ProcessId $ProcessId) {
                     Write-Host 'Manager credentials were entered and the login button was invoked.' -ForegroundColor Green
+                    return $true
                 }
-                return $true
+                Write-Host 'Verified login button could not be invoked. Waiting for manual login.' -ForegroundColor Yellow
+                return $false
             } catch {
                 Write-Host "Unable to complete automatic credential entry: $($_.Exception.Message)" -ForegroundColor Yellow
                 return $false

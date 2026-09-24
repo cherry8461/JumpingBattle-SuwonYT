@@ -3563,8 +3563,65 @@ span:has(#childPrice) {
     line-height: 1.45;
 }
 
+.checkpoint-filter-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+#checkpoint-select {
+    height: 28px;
+    min-width: 138px;
+    padding: 0 24px 0 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    color: #334155;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+#checkpoint-test-save-btn {
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    background: #fff7e6;
+    color: #9a5a00;
+    font-size: 10px;
+    font-weight: 800;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+#checkpoint-test-save-btn:hover {
+    background: #ffedc2;
+}
+
+#checkpoint-test-save-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
 .special-pay-table .supply-adjustment-table-row .special-pay-item {
     padding: 3px 5px;
+}
+
+.special-pay-table.special-adjustment-table {
+    margin: 0 0 6px;
+    border: 1px solid #ddd6fe;
+    border-radius: 6px;
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: hidden;
+}
+
+.special-pay-table.special-adjustment-table td {
+    border: 0;
+}
+
+.special-pay-table.special-sales-entry-table {
+    margin-top: 0;
 }
 
 .special-pay-table .supply-adjustment-amount-cell {
@@ -3593,6 +3650,113 @@ span:has(#childPrice) {
 .special-pay-table .supply-cash-receipt-label {
     text-align: center;
     padding: 3px 2px;
+}
+
+/* 기타 판매 입력표: 현금지출과 현금영수증을 한눈에 구분 */
+.special-pay-table.special-adjustment-table .supply-expense-section,
+.special-pay-table.special-adjustment-table .supply-expense-amount {
+    background: #fff7ed !important;
+}
+
+.special-pay-table.special-adjustment-table .supply-receipt-section,
+.special-pay-table.special-adjustment-table .supply-receipt-amount {
+    background: #ecfdf5 !important;
+}
+
+.special-pay-table.special-adjustment-table .supply-receipt-section {
+    border-left: 1px solid #cbd5e1 !important;
+    color: #047857;
+}
+
+.special-pay-table.special-adjustment-table .supply-expense-section {
+    color: #9a3412;
+    padding-right: 0 !important;
+}
+
+.special-pay-table.special-adjustment-table .supply-expense-wrap > span {
+    margin-left: 5px;
+}
+
+.special-pay-table.special-adjustment-table .supply-expense-amount {
+    padding-left: 0 !important;
+}
+
+.special-pay-table.special-adjustment-table .supply-expense-amount .currency-input {
+    position: relative;
+    left: -6px;
+    width: calc(100% + 6px);
+}
+
+.special-pay-table.special-adjustment-table .currency-input,
+.special-pay-table.special-adjustment-table .etc-item-text {
+    border-color: #cbd5e1;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+/* 파티룸/기타 결제 입력표 */
+.special-pay-table.special-sales-entry-table {
+    border: 1px solid #d8e0ea;
+    border-radius: 7px;
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.special-pay-table.special-sales-entry-table th {
+    background: #eaf0f7;
+    color: #334155;
+    border-bottom: 1px solid #cbd5e1;
+    height: 20px;
+}
+
+.special-pay-table.special-sales-entry-table tbody tr + tr td {
+    border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.special-pay-table.special-sales-entry-table td {
+    height: 25px;
+}
+
+/* 슬러시 등 상품 수량표 두 개를 하나의 정돈된 묶음처럼 표시 */
+.supply-two-col {
+    gap: 6px;
+    padding: 5px;
+    border: 1px solid #d8e0ea;
+    border-radius: 7px;
+    background: #f8fafc;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.supply-table.supply-table-compact {
+    margin: 0;
+    border: 1px solid #dbe3ec;
+    border-radius: 6px;
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: hidden;
+    background: #fff;
+}
+
+.supply-table.supply-table-compact th {
+    height: 19px;
+    background: #eaf0f7;
+    color: #334155;
+    border-bottom: 1px solid #cbd5e1;
+}
+
+.supply-table.supply-table-compact tbody tr + tr td {
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.supply-table.supply-table-compact td {
+    height: 25px;
+}
+
+.supply-table.supply-table-compact input {
+    border-color: #cbd5e1;
+    background: rgba(255, 255, 255, 0.92);
 }
 .game-setting-mismatch-title { font-weight: 800; margin-bottom: 8px; }
 .game-setting-mismatch-line { white-space: nowrap; }
@@ -4213,7 +4377,7 @@ span:has(#childPrice) {
 .walkin-panel .walkin-room-item {
     min-width: 220px;
     max-width: 350px;
-    height: 28px;
+    height: 30px;
     box-sizing: border-box;
     padding: 3px 6px 3px 10px;
     border-color: #d9e2ec;
@@ -4253,6 +4417,279 @@ span:has(#childPrice) {
     background: #fff7ed !important;
     border: 1px solid #fdba74;
     box-shadow: 0 1px 3px rgba(180, 83, 9, .16);
+}
+
+/* 2026-09-22: refined walk-in waiting palette. Layout and behavior stay unchanged. */
+.walkin-panel {
+    background: #eaf2f8 !important;
+    border-color: #91abc1 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85),
+                0 2px 7px rgba(30, 64, 95, .13) !important;
+}
+
+.walkin-panel .room-card.walkin .room-card-header::after {
+    background: #9db2c5 !important;
+}
+
+.walkin-panel .room-name-walkin {
+    background: #fff6ec !important;
+    color: #d95708 !important;
+    border-color: #f2b77d !important;
+    box-shadow: 0 1px 3px rgba(194, 88, 20, .12) !important;
+}
+
+.walkin-panel .room-card-walkin-body::before {
+    background: #f07a24 !important;
+    box-shadow: 0 0 0 3px rgba(240, 122, 36, .14) !important;
+}
+
+.walkin-panel .walkin-room-item {
+    background: #fffdf9 !important;
+    border-color: #e6c7a8 !important;
+    border-left-color: #ef7c2d !important;
+    box-shadow: 0 2px 5px rgba(91, 55, 28, .08) !important;
+}
+
+.walkin-panel .walkin-room-item:hover {
+    border-color: #ed8a43 !important;
+    box-shadow: 0 4px 9px rgba(196, 91, 25, .15) !important;
+}
+
+.walkin-panel .walkin-room-item .info b.walkin-team-text {
+    color: #c94f09 !important;
+}
+
+.walkin-panel .walkin-room-item .info span[style*="background: #f1f5f9"] {
+    background: #eef3f7 !important;
+    color: #3c5368 !important;
+}
+
+.walkin-panel .walkin-room-item .info span[style*="background: #dbeafe"] {
+    background: #e4effb !important;
+    color: #245f9e !important;
+}
+
+.walkin-panel .walkin-room-item button {
+    background: #ef7622 !important;
+    box-shadow: 0 2px 4px rgba(196, 80, 12, .2) !important;
+}
+
+.walkin-panel .walkin-room-item button:hover {
+    background: #d95f0b !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking {
+    background: #fbf8ff !important;
+    border-color: #c9b8e8 !important;
+    border-left-color: #7957b8 !important;
+    box-shadow: 0 2px 6px rgba(88, 60, 139, .11) !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking:hover {
+    border-color: #9b7bd0 !important;
+    box-shadow: 0 4px 9px rgba(88, 60, 139, .16) !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking .party-room-info-title {
+    color: #6842a5 !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking .party-room-info-separator {
+    color: #a991d0 !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking .party-room-info-value {
+    color: #4f3c70 !important;
+}
+
+.walkin-panel #noWalkIn {
+    color: #60778b !important;
+}
+
+/* Stronger visual hierarchy for the waiting lane. */
+.walkin-panel {
+    background: #fff7ed !important;
+    border: 1px solid #f59e42 !important;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .9),
+                0 2px 8px rgba(194, 65, 12, .15) !important;
+}
+
+.walkin-panel .room-card.walkin .room-card-header::after {
+    background: #f0a15d !important;
+}
+
+.walkin-panel .room-name-walkin {
+    background: #e85d04 !important;
+    color: #ffffff !important;
+    border-color: #d94f00 !important;
+    box-shadow: 0 2px 4px rgba(170, 57, 0, .22) !important;
+}
+
+.walkin-panel .room-card-walkin-body::before {
+    background: #f97316 !important;
+    box-shadow: 0 0 0 4px #ffdfc2 !important;
+}
+
+.walkin-panel .walkin-room-item {
+    background: #ffffff !important;
+    border: 1px solid #f97316 !important;
+    border-left: 5px solid #ea580c !important;
+    box-shadow: 0 2px 6px rgba(154, 52, 18, .14) !important;
+}
+
+.walkin-panel .walkin-room-item:hover {
+    background: #fffaf5 !important;
+    border-color: #e85d04 !important;
+    box-shadow: 0 4px 10px rgba(194, 65, 12, .22) !important;
+}
+
+.walkin-panel .walkin-room-item .info b.walkin-team-text {
+    color: #b93800 !important;
+}
+
+.walkin-panel .walkin-room-item button {
+    background: #e85d04 !important;
+    color: #ffffff !important;
+    border-color: #cf4f00 !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking {
+    background: #f8f4ff !important;
+    border: 1px solid #9d7bd8 !important;
+    border-left: 5px solid #6d3db5 !important;
+    box-shadow: 0 2px 7px rgba(83, 50, 140, .18) !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking:hover {
+    background: #f3edff !important;
+    border-color: #7546bd !important;
+    box-shadow: 0 4px 10px rgba(83, 50, 140, .24) !important;
+}
+
+.walkin-panel .walkin-room-item.is-party-room-booking .party-room-info-title {
+    color: #5b2e9b !important;
+}
+
+.walkin-panel #noWalkIn {
+    color: #7c4a2d !important;
+    font-weight: 700 !important;
+}
+
+/* Darker lane background so each waiting card is immediately visible. */
+.walkin-panel {
+    background: #d6e3ed !important;
+    border-color: #7894aa !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65),
+                0 2px 8px rgba(31, 61, 86, .18) !important;
+}
+
+.walkin-panel .room-card.walkin .room-card-header::after {
+    background: #829db2 !important;
+}
+
+.walkin-panel #noWalkIn {
+    color: #405d73 !important;
+}
+
+/* High-contrast dark waiting lane. */
+.walkin-panel {
+    background: #344b60 !important;
+    border-color: #203448 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12),
+                0 3px 9px rgba(15, 32, 48, .28) !important;
+}
+
+.walkin-panel .room-card.walkin .room-card-header::after {
+    background: #8fa6b8 !important;
+}
+
+.walkin-panel .room-card-walkin-body::before {
+    box-shadow: 0 0 0 4px rgba(255, 226, 201, .28) !important;
+}
+
+.walkin-panel #noWalkIn {
+    color: #eef5fa !important;
+}
+
+.walkin-panel .room-name-walkin {
+    background: #4c687f !important;
+    color: #ffffff !important;
+    border-color: #7891a5 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16),
+                0 2px 5px rgba(13, 30, 44, .24) !important;
+}
+
+.walkin-panel {
+    height: 56px !important;
+    min-height: 56px !important;
+    max-height: 56px !important;
+}
+
+.walkin-panel .room-card.walkin .room-name-container {
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+.walkin-panel .room-name-walkin {
+    justify-content: center !important;
+    text-align: center !important;
+    margin: 0 auto !important;
+    font-size: 15px !important;
+    letter-spacing: 0.7px !important;
+}
+
+/* Keep the waiting cards' white face and full outline visible on every side. */
+.walkin-panel .room-card-walkin-body {
+    height: 36px !important;
+    min-height: 36px !important;
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+    box-sizing: border-box !important;
+    align-items: center !important;
+}
+
+.walkin-panel .walkin-room-item {
+    height: 30px !important;
+    min-height: 30px !important;
+    background: #ffffff !important;
+    border-top: 1px solid #ff6a00 !important;
+    border-right: 1px solid #ff6a00 !important;
+    border-bottom: 1px solid #ff6a00 !important;
+    border-left: 5px solid #ff4d00 !important;
+    box-shadow: 0 0 5px rgba(255, 106, 0, .38) !important;
+    box-sizing: border-box !important;
+}
+
+/* Improve spacing and legibility inside the compact waiting lane. */
+.walkin-panel .room-card-walkin-body::before {
+    margin-right: 7px !important;
+}
+
+.walkin-panel .walkin-room-item .info {
+    gap: 4px !important;
+    align-items: center !important;
+}
+
+.walkin-panel .walkin-room-item .info b.walkin-team-text {
+    margin-right: 2px !important;
+}
+
+.walkin-panel .walkin-room-item .info > span:first-of-type {
+    margin: 0 2px !important;
+    color: #94a3b8 !important;
+}
+
+.walkin-panel .walkin-room-item .info span[style*="background: #f1f5f9"] {
+    background: #e2e8f0 !important;
+    color: #26384a !important;
+    font-weight: 800 !important;
+}
+
+.walkin-panel .walkin-room-item .info span[style*="background: #dbeafe"] {
+    background: #cfe1ff !important;
+    color: #174ea6 !important;
+    font-weight: 800 !important;
 }
 
 /* Expand only the active team label upward. Room number/state and card height stay fixed. */
@@ -4838,5 +5275,126 @@ span:has(#childPrice) {
     .settlement-header-controls #forceDayTypeBtn,
     .settlement-header-controls #view-all-btn {
         padding-inline: 7px !important;
+    }
+}
+
+/* 우측 상품표는 다회(청) 행까지 테두리를 닫고, 합계는 독립된 무테두리 영역으로 표시 */
+.supply-table-stack {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    background: transparent;
+}
+
+.supply-table-stack > .supply-table.supply-table-compact {
+    width: 100%;
+}
+
+.supply-table-stack > .supply-input-footer {
+    margin: 0;
+    padding: 4px 0 0 !important;
+    border: 0 !important;
+    background: #f8fafc !important;
+}
+
+.supply-table-stack > .supply-input-footer .supply-footer-row {
+    padding: 2px 1px 1px;
+    border: 0 !important;
+    background: #f8fafc !important;
+}
+
+/* 대기카드 배지: 랭킹 페이지와 같은 방 크기·난이도 색상 체계 */
+.walkin-panel .waiting-size-badge,
+.walkin-panel .waiting-level-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    min-height: 18px;
+    padding: 1px 6px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    box-sizing: border-box;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+
+.walkin-panel .waiting-size-small  { background:#feefc5; border-color:#f3d984; color:#854d0e; }
+.walkin-panel .waiting-size-medium { background:#daf1bf; border-color:#add783; color:#3f6212; }
+.walkin-panel .waiting-size-large  { background:#b8e9ff; border-color:#7fcbea; color:#1e40af; }
+.walkin-panel .waiting-size-unknown { background:#f1f5f9; border-color:#cbd5e1; color:#475569; }
+
+.walkin-panel .waiting-level-basic     { background:#fd8a69; border-color:#ef6e4a; color:#2b1b14; }
+.walkin-panel .waiting-level-easy      { background:#fd9f28; border-color:#e88812; color:#2b1b14; }
+.walkin-panel .waiting-level-normal    { background:#2fa599; border-color:#23877d; color:#ffffff; }
+.walkin-panel .waiting-level-hard      { background:#2e3d86; border-color:#202d70; color:#ffffff; }
+.walkin-panel .waiting-level-challenger{ background:#541d7a; border-color:#3f115f; color:#ffffff; }
+.walkin-panel .waiting-level-kids      { background:#ffcd4a; border-color:#e7b62f; color:#3b2f00; }
+.walkin-panel .waiting-level-summer    { background:#18a8f1; border-color:#0789ca; color:#ffffff; }
+.walkin-panel .waiting-level-space     { background:#5d6dbe; border-color:#4656a4; color:#ffffff; }
+.walkin-panel .waiting-level-santa     { background:#ff1803; border-color:#d91402; color:#ffffff; }
+.walkin-panel .waiting-level-unknown   { background:#e2e8f0; border-color:#cbd5e1; color:#475569; }
+
+.walkin-panel .waiting-fast-prefix {
+    margin-right: 3px;
+    color: #ef1b24;
+    font-size: 12px;
+    font-weight: 1000;
+    line-height: 1;
+}
+
+/* 대기카드 주목 효과: 카드와 형광 주황 테두리가 부드럽게 반짝인다. */
+.walkin-panel .walkin-room-item {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    transform-origin: center;
+    will-change: transform, filter, box-shadow;
+    animation: waitingCardAttention 2.8s ease-in-out infinite;
+}
+
+.walkin-panel .walkin-room-item::after {
+    display: none;
+}
+
+@keyframes waitingCardAttention {
+    0%, 10%, 20%, 38%, 100% {
+        transform: translateX(0) scale(1);
+        filter: brightness(1);
+        box-shadow:
+            0 1px 4px rgba(15, 23, 42, 0.14),
+            0 0 0 rgba(255, 92, 0, 0);
+        border-color: #ff5a00;
+        background-color: #ffffff;
+    }
+    5%, 15%, 25% {
+        transform: translateX(0) scale(1.035);
+        filter: brightness(1.18) saturate(1.35);
+        border-color: #ff2f00;
+        background-color: #fff1d6;
+        box-shadow:
+            0 4px 12px rgba(15, 23, 42, 0.28),
+            0 0 13px 6px rgba(255, 87, 0, 0.98),
+            inset 0 0 12px rgba(255, 193, 7, 0.92);
+    }
+    29% { transform: translateX(-5px) rotate(-0.7deg) scale(1.02); }
+    31% { transform: translateX(5px) rotate(0.7deg) scale(1.02); }
+    33% { transform: translateX(-4px) rotate(-0.5deg) scale(1.02); }
+    35% { transform: translateX(4px) rotate(0.5deg) scale(1.02); }
+    37% { transform: translateX(0) rotate(0) scale(1); }
+}
+
+.walkin-panel .walkin-room-item:hover,
+.walkin-panel .walkin-room-item:active,
+.walkin-panel .walkin-room-item[draggable="true"]:active {
+    animation-play-state: paused;
+    filter: brightness(1.05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .walkin-panel .walkin-room-item {
+        animation: none;
     }
 }

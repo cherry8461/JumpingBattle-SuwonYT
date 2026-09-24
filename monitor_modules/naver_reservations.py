@@ -144,10 +144,12 @@ def ensure_naver_email_placeholder_card(cursor, mail_item: dict) -> tuple[int | 
         return None, False
 
     cursor.execute(
-        "SELECT booking_row_id FROM naver_booking_card_links WHERE booking_id=?",
+        "SELECT booking_row_id, card_state FROM naver_booking_card_links WHERE booking_id=?",
         (booking_id,),
     )
     linked = cursor.fetchone()
+    if linked and linked[1] == "deleted_hidden":
+        return None, False
     if linked and linked[0]:
         return int(linked[0]), False
 
@@ -214,10 +216,12 @@ def ensure_naver_dashboard_card(cursor, normalized: dict) -> tuple[int | None, b
     if not timeline_time:
         return None, False
     cursor.execute(
-        "SELECT booking_row_id FROM naver_booking_card_links WHERE booking_id=?",
+        "SELECT booking_row_id, card_state FROM naver_booking_card_links WHERE booking_id=?",
         (booking_id,),
     )
     existing = cursor.fetchone()
+    if existing and existing[1] == "deleted_hidden":
+        return None, False
     if existing and existing[0]:
         # A mail hint can create the legacy waiting-list card before the
         # authenticated Naver API has supplied its complete details.  When

@@ -218,7 +218,7 @@
         }
     }
 
-    function render(grouped) {
+    function renderDashboardCardsLegacy(grouped) {
         const container = document.getElementById('roomSections');
         if (!container) return;
         container.innerHTML = '';
@@ -255,6 +255,58 @@
                                 ${item.is_paid ? '✅결제' : '미결제'}
                             </td>
                             <td>${item.game_status || '-'}</td>
+                        </tr>
+                    `;
+                });
+            }
+            tableHTML += `</tbody></table>`;
+            section.innerHTML = tableHTML;
+            container.appendChild(section);
+        });
+    }
+
+    function render(grouped) {
+        const container = document.getElementById('roomSections');
+        if (!container) return;
+        container.innerHTML = '';
+
+        ROOM_ORDER.forEach(room => {
+            const rows = grouped[room] || [];
+            const showRoomSize = room === 'B1' || room === 'B2';
+            const section = document.createElement('section');
+            section.className = 'room-section';
+
+            let tableHTML = `
+                <h2 class="room-title">ROOM ${escapeHtml(room)}</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>순번</th><th>실행 시간</th><th>방</th><th>팀명</th>
+                            ${showRoomSize ? '<th>방 크기</th>' : ''}<th>난이도</th>
+                            <th>최종 레벨</th><th>점수</th><th>상태</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            if (rows.length === 0) {
+                tableHTML += `<tr><td colspan="${showRoomSize ? 9 : 8}" class="empty-row">실행 기록이 없습니다.</td></tr>`;
+            } else {
+                rows.forEach((item, index) => {
+                    const started = item.time || '-';
+                    const ended = item.ended_at ? String(item.ended_at).slice(11, 16) : '';
+                    const timeText = ended ? `${started} ~ ${ended}` : started;
+                    tableHTML += `
+                        <tr>
+                            <td style="text-align:center;color:#666;">${index + 1}</td>
+                            <td>${escapeHtml(timeText)}</td>
+                            <td style="font-weight:bold;">${escapeHtml(item.room || room)}</td>
+                            <td style="color:#0056b3;font-weight:bold;">${escapeHtml(item.team || '-')}</td>
+                            ${showRoomSize ? `<td>${escapeHtml(item.room_size || '-')}</td>` : ''}
+                            <td>${escapeHtml(item.level || '-')}</td>
+                            <td>${escapeHtml(String(item.final_level ?? '-'))}</td>
+                            <td>${escapeHtml(String(item.final_score ?? '-'))}</td>
+                            <td>${escapeHtml(item.game_status || '-')}</td>
                         </tr>
                     `;
                 });

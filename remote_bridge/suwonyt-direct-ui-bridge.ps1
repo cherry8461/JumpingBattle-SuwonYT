@@ -79,13 +79,42 @@ function ClearSyncIssue {
   $script:suppressedSyncErrors = 0
 }
 function Descendants($element) {
-  $items = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
-  $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
-  function Walk($node) {
-    $child = $walker.GetFirstChild($node)
-    while ($child) { [void]$items.Add($child); Walk $child; $child = $walker.GetNextSibling($child) }
+  # Qt rebuilds parts of its UI tree while a game changes state.  A raw UIA
+  # traversal can then fail halfway through.  Restart the whole snapshot a few
+  # times instead of leaving the bridge disconnected until the next command.
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      $items = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
+      $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+      $stack = New-Object System.Collections.Generic.Stack[System.Windows.Automation.AutomationElement]
+      $rootChildren = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
+      $rootChild = $walker.GetFirstChild($element)
+      while ($rootChild) {
+        [void]$rootChildren.Add($rootChild)
+        $rootChild = $walker.GetNextSibling($rootChild)
+      }
+      for ($index = $rootChildren.Count - 1; $index -ge 0; $index--) {
+        $stack.Push($rootChildren[$index])
+      }
+      while ($stack.Count -gt 0) {
+        $node = $stack.Pop()
+        [void]$items.Add($node)
+        $children = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
+        $child = $walker.GetFirstChild($node)
+        while ($child) {
+          [void]$children.Add($child)
+          $child = $walker.GetNextSibling($child)
+        }
+        for ($index = $children.Count - 1; $index -ge 0; $index--) {
+          $stack.Push($children[$index])
+        }
+      }
+      return $items
+    } catch {
+      if ($attempt -eq 3) { throw }
+      Start-Sleep -Milliseconds (80 * $attempt)
+    }
   }
-  Walk $element; return $items
 }
 function BySuffix($element, [string]$suffix) {
   foreach ($item in (Descendants $element)) { if ($item.Current.AutomationId.EndsWith($suffix)) { return $item } }
